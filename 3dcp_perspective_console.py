@@ -28,7 +28,7 @@ except Exception:
 
 APP_NAME = "Deck Card Widget"
 THEME_NAME = "Deck Card Widget Lab"
-APP_VERSION = "1.1.0-de"
+APP_VERSION = "1.1.1-de2"
 BUTTSTORE_FORMAT = "3DCP-BUTTSTORE"
 BUTTSTORE_ABI = "3dcp.perspective_console.buttstore.v0"
 
@@ -307,7 +307,7 @@ DISPLAY_TEXT_DEFAULTS = [
     {
         "id": "row_source_type",
         "label": "Row Label - Source Type",
-        "text": "CARD TYPE:",
+        "text": "CARD TYPE",
         "old_text": "SOURCE TYPE:",
         "x": 52,
         "y": 96,
@@ -324,7 +324,7 @@ DISPLAY_TEXT_DEFAULTS = [
     {
         "id": "row_confidence",
         "label": "Row Label - Confidence",
-        "text": "CONFIDENCE:",
+        "text": "CONFIDENCE",
         "old_text": "CONFIDENCE:",
         "x": 52,
         "y": 128,
@@ -341,7 +341,7 @@ DISPLAY_TEXT_DEFAULTS = [
     {
         "id": "row_verdict",
         "label": "Row Label - Verdict",
-        "text": "STATUS:",
+        "text": "STATUS",
         "old_text": "VERDICT:",
         "x": 52,
         "y": 160,
@@ -517,6 +517,165 @@ DISPLAY_TEXT_DEFAULTS = [
 DISPLAY_TEXT_DEFAULTS_BY_ID = {item["id"]: item for item in DISPLAY_TEXT_DEFAULTS}
 
 
+TOP_ROW_DEFAULTS = [
+    {
+        "id": "sourceType",
+        "label": "Row 1 - CARD TYPE",
+        "field": "sourceType",
+        "display_label_id": "row_source_type",
+        "default_value": "Primary",
+        "default_option_label": "CARD TYPE",
+        "value_x": 200,
+        "value_y": 96,
+        "line_color": "#1b2f2b",
+        "options": SOURCE_TYPES,
+    },
+    {
+        "id": "confidence",
+        "label": "Row 2 - CONFIDENCE",
+        "field": "confidence",
+        "display_label_id": "row_confidence",
+        "default_value": "Medium",
+        "default_option_label": "CONFIDENCE",
+        "value_x": 200,
+        "value_y": 128,
+        "line_color": "#1b2f2b",
+        "options": CONFIDENCE_LEVELS,
+    },
+    {
+        "id": "verdict",
+        "label": "Row 3 - STATUS",
+        "field": "verdict",
+        "display_label_id": "row_verdict",
+        "default_value": "Still Checking",
+        "default_option_label": "STATUS",
+        "value_x": 200,
+        "value_y": 160,
+        "line_color": "#1b2f2b",
+        "options": VERDICTS,
+    },
+]
+TOP_ROW_DEFAULTS_BY_ID = {item["id"]: item for item in TOP_ROW_DEFAULTS}
+TOP_ROW_FIELD_TO_ID = {item["field"]: item["id"] for item in TOP_ROW_DEFAULTS}
+TOP_ROW_LABEL_TO_ID = {item["display_label_id"]: item["id"] for item in TOP_ROW_DEFAULTS}
+
+
+def top_row_option_id(text: str, prefix: str = "option") -> str:
+    base = re.sub(r"[^A-Za-z0-9]+", "-", (text or "option").strip().lower()).strip("-") or "option"
+    return f"{prefix}-{base[:36]}"
+
+
+def make_top_row_option(row_default: dict, text: str, index: int = 0) -> dict:
+    text = (text or "Option").strip() or "Option"
+    row_id = str(row_default.get("id", "row"))
+    return {
+        "id": top_row_option_id(text, row_id),
+        "text": text,
+        "x": int(row_default.get("value_x", 200)),
+        "y": int(row_default.get("value_y", 96)),
+        "color": "#f0fff8",
+        "bar_color": "#00ff99",
+        "font_family": "TkDefaultFont",
+        "font_size": 15,
+        "font_weight": "bold",
+        "font_slant": "roman",
+        "visible": True,
+        "default_text": text,
+        "default_color": "#f0fff8",
+        "default_bar_color": "#00ff99",
+        "default_font_size": 15,
+        "created_from_default_index": index,
+    }
+
+
+def default_top_rows() -> list[dict]:
+    rows = []
+    for row_default in TOP_ROW_DEFAULTS:
+        row = copy.deepcopy(row_default)
+        options = [make_top_row_option(row_default, text, idx) for idx, text in enumerate(row_default.get("options", []))]
+        row["options"] = options
+        row["default_options"] = [copy.deepcopy(option) for option in options]
+        rows.append(row)
+    return rows
+
+
+def ensure_top_row_storage(data: dict) -> list[dict]:
+    """Repair editable dropdown option storage without touching user cards.
+
+    The Top Rows tab edits the option sets for the three top output rows. Older
+    .buttstore files only stored card field values, so this function creates the
+    missing global option records and preserves any custom values already present.
+    """
+    header = data.setdefault("header", {})
+    stored = header.setdefault("top_rows", [])
+    if not isinstance(stored, list):
+        stored = []
+        header["top_rows"] = stored
+
+    stored_by_id = {str(row.get("id", "")): row for row in stored if isinstance(row, dict)}
+    repaired = []
+    for default_row in default_top_rows():
+        existing = stored_by_id.get(default_row["id"])
+        if not existing:
+            repaired.append(default_row)
+            continue
+
+        merged = copy.deepcopy(default_row)
+        # Preserve user-level row settings except immutable identity plumbing.
+        for key, value in existing.items():
+            if key in {"id", "field", "display_label_id", "default_options"}:
+                continue
+            if key == "options":
+                continue
+            merged[key] = value
+
+        existing_options = existing.get("options", [])
+        if not isinstance(existing_options, list):
+            existing_options = []
+        normalized_options = []
+        seen_ids = set()
+        for idx, opt in enumerate(existing_options):
+            if not isinstance(opt, dict):
+                continue
+            text = str(opt.get("text", "")).strip()
+            if not text:
+                continue
+            fallback = make_top_row_option(default_row, text, idx)
+            fixed = copy.deepcopy(fallback)
+            for key, value in opt.items():
+                if key == "id":
+                    continue
+                fixed[key] = value
+            fixed["id"] = str(opt.get("id") or top_row_option_id(text, default_row["id"]))
+            base_id = fixed["id"]
+            counter = 2
+            while fixed["id"] in seen_ids:
+                fixed["id"] = f"{base_id}-{counter}"
+                counter += 1
+            fixed["color"] = normalize_hex_color(str(fixed.get("color", "#f0fff8")), "#f0fff8")
+            fixed["bar_color"] = normalize_hex_color(str(fixed.get("bar_color", "#00ff99")), "#00ff99")
+            fixed["font_size"] = max(6, min(96, int(fixed.get("font_size", 15))))
+            fixed["visible"] = bool(fixed.get("visible", True))
+            normalized_options.append(fixed)
+            seen_ids.add(fixed["id"])
+
+        # Bring in any newly-added baseline defaults, but do not duplicate text values.
+        known_text = {str(opt.get("text", "")).strip().casefold() for opt in normalized_options}
+        for default_option in default_row.get("default_options", []):
+            text_key = str(default_option.get("text", "")).strip().casefold()
+            if text_key and text_key not in known_text:
+                normalized_options.append(copy.deepcopy(default_option))
+                known_text.add(text_key)
+
+        if not normalized_options:
+            normalized_options = [make_top_row_option(default_row, str(default_row.get("default_value", "Option")), 0)]
+        merged["options"] = normalized_options
+        repaired.append(merged)
+
+    header["top_rows"] = repaired
+    return repaired
+
+
 def default_display_text_objects() -> list[dict]:
     objects = []
     for item in DISPLAY_TEXT_DEFAULTS:
@@ -585,6 +744,7 @@ def make_default_buttstore(preserve_footer: dict | None = None) -> dict:
             "resource_profile": "low",
             "output": {"width": OUTPUT_WIDTH, "height": OUTPUT_HEIGHT, "background": "#121418", "title": OUTPUT_TITLE},
             "display_text": default_display_text_objects(),
+            "top_rows": default_top_rows(),
             "quick_cards": [{"id": c["id"], "label": c["label"], "type": c["type"]} for c in cards],
         },
         "under_header": {
@@ -809,6 +969,7 @@ class ButtStore:
         header.setdefault("resource_profile", "low")
         header.setdefault("output", {"width": OUTPUT_WIDTH, "height": OUTPUT_HEIGHT, "background": "#121418", "title": OUTPUT_TITLE})
         ensure_display_text_storage(data)
+        ensure_top_row_storage(data)
         under = data["under_header"]
         under.setdefault("dirty", False)
         under.setdefault("output_visible", True)
@@ -1042,6 +1203,25 @@ class PerspectiveConsoleApp:
         self.display_text_storage_listbox = None
         self.display_text_value_text = None
 
+        # v1.1.1 Top Rows editor state. These records control the three
+        # dropdown option sets and how selected row values render on output.
+        ensure_top_row_storage(self.store.data)
+        self.top_row_label_to_id = {}
+        self.top_row_option_label_to_id = {}
+        self.selected_top_row_label_var = tk.StringVar(value="")
+        self.selected_top_row_id_var = tk.StringVar(value="sourceType")
+        self.selected_top_row_option_label_var = tk.StringVar(value="")
+        self.selected_top_row_option_id_var = tk.StringVar(value="")
+        self.top_row_option_text_var = tk.StringVar(value="")
+        self.top_row_font_size_var = tk.IntVar(value=15)
+        self.top_row_text_color_var = tk.StringVar(value="#f0fff8")
+        self.top_row_bar_color_var = tk.StringVar(value="#00ff99")
+        self.top_row_x_var = tk.IntVar(value=200)
+        self.top_row_y_var = tk.IntVar(value=96)
+        self.top_row_visible_var = tk.BooleanVar(value=True)
+        self.top_row_selector = None
+        self.top_row_option_selector = None
+
         self.card_buttons = {}
         self.deck_button_frame = None
         self.deck_storage_listbox = None
@@ -1174,11 +1354,14 @@ class PerspectiveConsoleApp:
 
         ttk.Label(right, text="Deck Card Editor", font=("TkDefaultFont", 14, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(right, text="Source Type").grid(row=1, column=0, sticky="w", pady=(12, 2))
-        ttk.Combobox(right, state="readonly", textvariable=self.source_type_var, values=SOURCE_TYPES).grid(row=1, column=1, sticky="ew", pady=(12, 2))
+        self.source_type_combo = ttk.Combobox(right, state="readonly", textvariable=self.source_type_var, values=self.visible_top_row_values("sourceType"))
+        self.source_type_combo.grid(row=1, column=1, sticky="ew", pady=(12, 2))
         ttk.Label(right, text="Confidence").grid(row=2, column=0, sticky="w", pady=2)
-        ttk.Combobox(right, state="readonly", textvariable=self.confidence_var, values=CONFIDENCE_LEVELS).grid(row=2, column=1, sticky="ew", pady=2)
+        self.confidence_combo = ttk.Combobox(right, state="readonly", textvariable=self.confidence_var, values=self.visible_top_row_values("confidence"))
+        self.confidence_combo.grid(row=2, column=1, sticky="ew", pady=2)
         ttk.Label(right, text="Verdict").grid(row=3, column=0, sticky="w", pady=2)
-        ttk.Combobox(right, state="readonly", textvariable=self.verdict_var, values=VERDICTS).grid(row=3, column=1, sticky="ew", pady=2)
+        self.verdict_combo = ttk.Combobox(right, state="readonly", textvariable=self.verdict_var, values=self.visible_top_row_values("verdict"))
+        self.verdict_combo.grid(row=3, column=1, sticky="ew", pady=2)
         ttk.Label(right, text="Source Link (for QR)").grid(row=4, column=0, sticky="w", pady=(6, 2))
         ttk.Entry(right, textvariable=self.source_link_var).grid(row=4, column=1, sticky="ew", pady=(6, 2))
         ttk.Label(right, text="Current Claim").grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 2))
@@ -1194,19 +1377,21 @@ class PerspectiveConsoleApp:
         layer_notebook.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(12, 0))
 
         deck_frame = ttk.Frame(layer_notebook, padding=8)
-        display_edit_frame = ttk.Frame(layer_notebook, padding=8)
         sticker_frame = ttk.Frame(layer_notebook, padding=8)
         image_frame = ttk.Frame(layer_notebook, padding=8)
         text_layer_frame = ttk.Frame(layer_notebook, padding=8)
-        layer_notebook.add(deck_frame, text="Deck Cards")
-        layer_notebook.add(display_edit_frame, text="Display Edit")
         output_tools_frame = ttk.Frame(layer_notebook, padding=8)
         hotkeys_frame = ttk.Frame(layer_notebook, padding=8)
+        display_edit_frame = ttk.Frame(layer_notebook, padding=8)
+        top_rows_frame = ttk.Frame(layer_notebook, padding=8)
+        layer_notebook.add(deck_frame, text="Deck Cards")
         layer_notebook.add(sticker_frame, text="Emoji Stickers")
         layer_notebook.add(image_frame, text="PNG Images")
         layer_notebook.add(text_layer_frame, text="Text Layers")
         layer_notebook.add(output_tools_frame, text="Output Tools")
         layer_notebook.add(hotkeys_frame, text="Hotkeys")
+        layer_notebook.add(display_edit_frame, text="Display Edit")
+        layer_notebook.add(top_rows_frame, text="Top Rows")
 
         deck_frame.columnconfigure(0, weight=0, minsize=452)
         deck_frame.columnconfigure(1, weight=1)
@@ -1346,6 +1531,71 @@ class PerspectiveConsoleApp:
         display_storage_scroll.grid(row=0, column=1, sticky="ns")
         self.display_text_storage_listbox.configure(yscrollcommand=display_storage_scroll.set)
         self.display_text_storage_listbox.bind("<<ListboxSelect>>", self.on_display_text_selected)
+
+        top_rows_frame.columnconfigure(0, weight=1)
+        top_rows_frame.rowconfigure(7, weight=1)
+        ttk.Label(top_rows_frame, text="Top row picker").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
+        self.top_row_selector = ttk.Combobox(top_rows_frame, state="readonly", textvariable=self.selected_top_row_label_var, values=[], width=34)
+        self.top_row_selector.grid(row=0, column=1, columnspan=5, sticky="ew", pady=2)
+        self.top_row_selector.bind("<<ComboboxSelected>>", self.on_top_row_selected)
+
+        ttk.Label(top_rows_frame, text="Option picker").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=2)
+        self.top_row_option_selector = ttk.Combobox(top_rows_frame, state="readonly", textvariable=self.selected_top_row_option_label_var, values=[], width=34)
+        self.top_row_option_selector.grid(row=1, column=1, columnspan=5, sticky="ew", pady=2)
+        self.top_row_option_selector.bind("<<ComboboxSelected>>", self.on_top_row_option_selected)
+
+        ttk.Label(top_rows_frame, text="Text").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Entry(top_rows_frame, textvariable=self.top_row_option_text_var, width=28).grid(row=2, column=1, sticky="ew", pady=2)
+        ttk.Label(top_rows_frame, text="Size").grid(row=2, column=2, sticky="e", padx=(10, 4), pady=2)
+        ttk.Spinbox(top_rows_frame, from_=6, to=96, textvariable=self.top_row_font_size_var, width=7, command=self.apply_top_row_option).grid(row=2, column=3, sticky="w", pady=2)
+        ttk.Label(top_rows_frame, text="Text RGB").grid(row=2, column=4, sticky="e", padx=(10, 4), pady=2)
+        ttk.Entry(top_rows_frame, textvariable=self.top_row_text_color_var, width=10).grid(row=2, column=5, sticky="w", pady=2)
+
+        ttk.Label(top_rows_frame, text="Bar RGB").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Entry(top_rows_frame, textvariable=self.top_row_bar_color_var, width=10).grid(row=3, column=1, sticky="w", pady=2)
+        ttk.Button(top_rows_frame, text="Pick Text RGB", command=lambda: self.choose_top_row_color("text")).grid(row=3, column=2, sticky="w", padx=(8, 0), pady=2)
+        ttk.Button(top_rows_frame, text="Pick Bar RGB", command=lambda: self.choose_top_row_color("bar")).grid(row=3, column=3, sticky="w", padx=(8, 0), pady=2)
+        ttk.Label(top_rows_frame, text="X").grid(row=3, column=4, sticky="e", padx=(10, 4), pady=2)
+        ttk.Spinbox(top_rows_frame, from_=0, to=960, textvariable=self.top_row_x_var, width=7, command=self.apply_top_row_option).grid(row=3, column=5, sticky="w", pady=2)
+        ttk.Label(top_rows_frame, text="Y").grid(row=3, column=6, sticky="e", padx=(10, 4), pady=2)
+        ttk.Spinbox(top_rows_frame, from_=0, to=500, textvariable=self.top_row_y_var, width=7, command=self.apply_top_row_option).grid(row=3, column=7, sticky="w", pady=2)
+
+        top_button_row = ttk.Frame(top_rows_frame)
+        top_button_row.grid(row=4, column=0, columnspan=8, sticky="ew", pady=(6, 0))
+        ttk.Button(top_button_row, text="Add Text", command=self.add_top_row_option).pack(side="left")
+        ttk.Button(top_button_row, text="Duplicate", command=self.duplicate_top_row_option).pack(side="left", padx=4)
+        ttk.Button(top_button_row, text="Apply Dropdown", command=self.apply_top_row_option).pack(side="left", padx=4)
+        ttk.Button(top_button_row, text="Move Up", command=lambda: self.move_top_row_option(-1)).pack(side="left", padx=4)
+        ttk.Button(top_button_row, text="Move Down", command=lambda: self.move_top_row_option(1)).pack(side="left", padx=4)
+        ttk.Button(top_button_row, text="Delete", command=self.delete_top_row_option).pack(side="left", padx=4)
+        ttk.Button(top_button_row, text="Show", command=self.show_top_row_option).pack(side="left", padx=4)
+        ttk.Button(top_button_row, text="Hide", command=self.hide_top_row_option).pack(side="left", padx=4)
+
+        top_nudge_row = ttk.Frame(top_rows_frame)
+        top_nudge_row.grid(row=5, column=0, columnspan=8, sticky="ew", pady=(4, 0))
+        ttk.Label(top_nudge_row, text="Nudge value + bar").pack(side="left", padx=(0, 4))
+        ttk.Button(top_nudge_row, text="←", width=3, command=lambda: self.nudge_top_row_option(-1, 0)).pack(side="left")
+        ttk.Button(top_nudge_row, text="↑", width=3, command=lambda: self.nudge_top_row_option(0, -1)).pack(side="left")
+        ttk.Button(top_nudge_row, text="↓", width=3, command=lambda: self.nudge_top_row_option(0, 1)).pack(side="left")
+        ttk.Button(top_nudge_row, text="→", width=3, command=lambda: self.nudge_top_row_option(1, 0)).pack(side="left")
+        ttk.Button(top_nudge_row, text="←10", width=5, command=lambda: self.nudge_top_row_option(-10, 0)).pack(side="left", padx=(8, 0))
+        ttk.Button(top_nudge_row, text="↑10", width=5, command=lambda: self.nudge_top_row_option(0, -10)).pack(side="left")
+        ttk.Button(top_nudge_row, text="↓10", width=5, command=lambda: self.nudge_top_row_option(0, 10)).pack(side="left")
+        ttk.Button(top_nudge_row, text="→10", width=5, command=lambda: self.nudge_top_row_option(10, 0)).pack(side="left")
+
+        top_extra_row = ttk.Frame(top_rows_frame)
+        top_extra_row.grid(row=6, column=0, columnspan=8, sticky="ew", pady=(4, 0))
+        ttk.Button(top_extra_row, text="Use Option On Active Card", command=self.use_selected_top_row_option_on_card).pack(side="left")
+        ttk.Button(top_extra_row, text="Default Selected Option", command=self.default_top_row_option).pack(side="left", padx=4)
+        ttk.Button(top_extra_row, text="Reset This Row Defaults", command=self.reset_selected_top_row_defaults).pack(side="left", padx=4)
+        ttk.Checkbutton(top_extra_row, text="Option visible in dropdown/output", variable=self.top_row_visible_var, command=self.apply_top_row_option).pack(side="left", padx=(14, 0))
+
+        top_note = ttk.Label(
+            top_rows_frame,
+            text="Top Rows controls the three main dropdown data sets and their output value styling. Display Edit still controls the row labels: CARD TYPE, CONFIDENCE, and STATUS.",
+            wraplength=780,
+        )
+        top_note.grid(row=7, column=0, columnspan=8, sticky="w", pady=(10, 0))
 
         sticker_frame.columnconfigure(0, weight=0)
         sticker_frame.columnconfigure(1, weight=1)
@@ -1605,7 +1855,7 @@ class PerspectiveConsoleApp:
         output_notes.grid(row=5, column=0, sticky="ew", pady=(10, 0))
         output_notes.insert("1.0",
             "OBS Output Notes\n"
-            "- The output window title is stays the same between app versions.\n"
+            "- The output window title is now stable between app versions.\n"
             "- Borderless OBS mode removes the window frame for cleaner capture.\n"
             "- Always on top is useful while arranging OBS/window capture.\n"
             "- Normal Output restores the frame so you can move the window normally.\n"
@@ -1682,7 +1932,417 @@ class PerspectiveConsoleApp:
         for var in [self.display_text_x_var, self.display_text_y_var, self.display_text_color_var, self.display_text_border_enabled_var, self.display_text_border_color_var, self.display_text_font_size_var]:
             var.trace_add("write", lambda *_: self.schedule_display_text_stage_only())
 
+        for var in [self.top_row_option_text_var, self.top_row_font_size_var, self.top_row_text_color_var, self.top_row_bar_color_var, self.top_row_x_var, self.top_row_y_var, self.top_row_visible_var]:
+            var.trace_add("write", lambda *_: self.schedule_top_row_stage_only())
+
         self.refresh_display_text_storage()
+        self.refresh_top_row_editor()
+        self.refresh_top_dropdown_values()
+
+    def top_rows(self) -> list[dict]:
+        return ensure_top_row_storage(self.store.data)
+
+    def top_row_by_id(self, row_id: str) -> dict | None:
+        for row in self.top_rows():
+            if row.get("id") == row_id:
+                return row
+        return None
+
+    def top_row_by_field(self, field: str) -> dict | None:
+        return self.top_row_by_id(TOP_ROW_FIELD_TO_ID.get(field, field))
+
+    def top_row_by_label_id(self, label_id: str) -> dict | None:
+        return self.top_row_by_id(TOP_ROW_LABEL_TO_ID.get(label_id, ""))
+
+    def selected_top_row(self) -> dict | None:
+        return self.top_row_by_id(self.selected_top_row_id_var.get())
+
+    def selected_top_row_option(self) -> dict | None:
+        row = self.selected_top_row()
+        if not row:
+            return None
+        selected_id = self.selected_top_row_option_id_var.get()
+        for option in row.get("options", []):
+            if option.get("id") == selected_id:
+                return option
+        return None
+
+    def top_row_option_by_text(self, row: dict | None, text: str) -> dict | None:
+        if not row:
+            return None
+        wanted = str(text or "").strip().casefold()
+        for option in row.get("options", []):
+            if str(option.get("text", "")).strip().casefold() == wanted:
+                return option
+        return None
+
+    def visible_top_row_values(self, row_id: str) -> list[str]:
+        row = self.top_row_by_id(row_id)
+        if not row:
+            row = TOP_ROW_DEFAULTS_BY_ID.get(row_id)
+            return list(row.get("options", [])) if row else []
+        values = [str(opt.get("text", "")).strip() for opt in row.get("options", []) if opt.get("visible", True) and str(opt.get("text", "")).strip()]
+        if not values:
+            fallback = str(row.get("default_value", "Option")).strip() or "Option"
+            values = [fallback]
+        return values
+
+    def refresh_top_dropdown_values(self) -> None:
+        combos = [
+            (getattr(self, "source_type_combo", None), "sourceType", self.source_type_var),
+            (getattr(self, "confidence_combo", None), "confidence", self.confidence_var),
+            (getattr(self, "verdict_combo", None), "verdict", self.verdict_var),
+        ]
+        for combo, row_id, var in combos:
+            values = self.visible_top_row_values(row_id)
+            if combo is not None:
+                combo.configure(values=values)
+            if not var.get().strip():
+                var.set(values[0] if values else "")
+
+    def ensure_current_card_values_are_options(self) -> None:
+        fields = self.store.active_card().get("fields", {})
+        changed = False
+        for field, row_id in TOP_ROW_FIELD_TO_ID.items():
+            value = str(fields.get(field, "")).strip()
+            if not value:
+                continue
+            row = self.top_row_by_id(row_id)
+            if row and self.top_row_option_by_text(row, value) is None:
+                option = make_top_row_option(TOP_ROW_DEFAULTS_BY_ID[row_id], value, len(row.get("options", [])))
+                option["created_from_card_value"] = True
+                row.setdefault("options", []).append(option)
+                changed = True
+        if changed:
+            self.store.mark_dirty("top-row-options-learned-card-values")
+
+    def top_row_selector_label(self, row: dict) -> str:
+        return str(row.get("label", row.get("id", "Top Row"))).strip() or "Top Row"
+
+    def top_row_option_label(self, option: dict, index: int | None = None) -> str:
+        prefix = f"{index + 1}. " if index is not None else ""
+        text = str(option.get("text", "Option")).strip() or "Option"
+        hidden = "  [hidden]" if option.get("visible", True) is False else ""
+        return f"{prefix}{text}{hidden}"
+
+    def refresh_top_row_editor(self) -> None:
+        if self.top_row_selector is None or self.top_row_option_selector is None:
+            return
+        self.top_row_label_to_id = {}
+        row_labels = []
+        for row in self.top_rows():
+            label = self.top_row_selector_label(row)
+            self.top_row_label_to_id[label] = row.get("id", "")
+            row_labels.append(label)
+        self.top_row_selector.configure(values=row_labels)
+        if not self.selected_top_row_id_var.get() and self.top_rows():
+            self.selected_top_row_id_var.set(self.top_rows()[0].get("id", ""))
+        current_row = self.selected_top_row()
+        if current_row is None and self.top_rows():
+            current_row = self.top_rows()[0]
+            self.selected_top_row_id_var.set(current_row.get("id", ""))
+        if current_row:
+            self.selected_top_row_label_var.set(self.top_row_selector_label(current_row))
+        self.refresh_top_row_option_selector()
+
+    def refresh_top_row_option_selector(self) -> None:
+        if self.top_row_option_selector is None:
+            return
+        row = self.selected_top_row()
+        self.top_row_option_label_to_id = {}
+        values = []
+        if row:
+            for idx, option in enumerate(row.get("options", [])):
+                label = self.top_row_option_label(option, idx)
+                base = label
+                counter = 2
+                while label in self.top_row_option_label_to_id:
+                    label = f"{base} ({counter})"
+                    counter += 1
+                self.top_row_option_label_to_id[label] = option.get("id", "")
+                values.append(label)
+        self.top_row_option_selector.configure(values=values)
+        current_id = self.selected_top_row_option_id_var.get()
+        if row and not any(opt.get("id") == current_id for opt in row.get("options", [])):
+            current_id = row.get("options", [{}])[0].get("id", "") if row.get("options") else ""
+            self.selected_top_row_option_id_var.set(current_id)
+        selected_label = ""
+        for label, opt_id in self.top_row_option_label_to_id.items():
+            if opt_id == self.selected_top_row_option_id_var.get():
+                selected_label = label
+                break
+        if not selected_label and values:
+            selected_label = values[0]
+            self.selected_top_row_option_id_var.set(self.top_row_option_label_to_id[selected_label])
+        self.selected_top_row_option_label_var.set(selected_label)
+        self.load_selected_top_row_option_into_controls()
+
+    def on_top_row_selected(self, _event=None) -> None:
+        label = self.selected_top_row_label_var.get()
+        row_id = self.top_row_label_to_id.get(label, "")
+        if row_id:
+            self.selected_top_row_id_var.set(row_id)
+            row = self.selected_top_row()
+            if row and row.get("options"):
+                self.selected_top_row_option_id_var.set(row["options"][0].get("id", ""))
+            self.refresh_top_row_option_selector()
+
+    def on_top_row_option_selected(self, _event=None) -> None:
+        label = self.selected_top_row_option_label_var.get()
+        option_id = self.top_row_option_label_to_id.get(label, "")
+        if option_id:
+            self.selected_top_row_option_id_var.set(option_id)
+        self.load_selected_top_row_option_into_controls()
+
+    def load_selected_top_row_option_into_controls(self) -> None:
+        option = self.selected_top_row_option()
+        if not option:
+            return
+        self.top_row_option_text_var.set(str(option.get("text", "")))
+        self.top_row_font_size_var.set(max(6, min(96, int(option.get("font_size", 15)))))
+        self.top_row_text_color_var.set(normalize_hex_color(option.get("color", "#f0fff8"), "#f0fff8"))
+        self.top_row_bar_color_var.set(normalize_hex_color(option.get("bar_color", "#00ff99"), "#00ff99"))
+        self.top_row_x_var.set(max(0, min(OUTPUT_WIDTH, int(option.get("x", 200)))))
+        self.top_row_y_var.set(max(0, min(OUTPUT_HEIGHT, int(option.get("y", 96)))))
+        self.top_row_visible_var.set(bool(option.get("visible", True)))
+
+    def schedule_top_row_stage_only(self) -> None:
+        if self.selected_top_row_id_var.get() and self.selected_top_row_option_id_var.get():
+            self.store.data["stage"]["save_body_pending"] = True
+            self.store.mark_dirty("top-row-stage-updated")
+            self.schedule_autosave()
+
+    def apply_top_row_option_without_reschedule(self) -> bool:
+        option = self.selected_top_row_option()
+        if not option:
+            return False
+        try:
+            option["font_size"] = max(6, min(96, int(self.top_row_font_size_var.get())))
+            option["x"] = max(0, min(OUTPUT_WIDTH, int(self.top_row_x_var.get())))
+            option["y"] = max(0, min(OUTPUT_HEIGHT, int(self.top_row_y_var.get())))
+        except (tk.TclError, ValueError):
+            return False
+        old_text = str(option.get("text", "")).strip()
+        option["text"] = (self.top_row_option_text_var.get().strip() or old_text or "Option")[:64]
+        option["color"] = normalize_hex_color(self.top_row_text_color_var.get(), option.get("default_color", "#f0fff8"))
+        option["bar_color"] = normalize_hex_color(self.top_row_bar_color_var.get(), option.get("default_bar_color", "#00ff99"))
+        option["visible"] = bool(self.top_row_visible_var.get())
+        # If a selected card currently uses the old option text, keep it synced to the renamed option.
+        row = self.selected_top_row()
+        if row and old_text and old_text != option["text"]:
+            field = row.get("field", "")
+            fields = self.store.active_card().setdefault("fields", {})
+            if fields.get(field) == old_text:
+                fields[field] = option["text"]
+                if field == "sourceType":
+                    self.source_type_var.set(option["text"])
+                elif field == "confidence":
+                    self.confidence_var.set(option["text"])
+                elif field == "verdict":
+                    self.verdict_var.set(option["text"])
+        self.store.mark_dirty("top-row-option-applied")
+        return True
+
+    def apply_top_row_option(self) -> None:
+        if not self.apply_top_row_option_without_reschedule():
+            return
+        self.refresh_top_dropdown_values()
+        self.refresh_top_row_option_selector()
+        self.redraw_output()
+        self.schedule_autosave()
+        self.status_var.set("Top row option applied")
+
+    def add_top_row_option(self) -> None:
+        row = self.selected_top_row()
+        if not row:
+            return
+        text = self.top_row_option_text_var.get().strip() or "New Option"
+        option = make_top_row_option(TOP_ROW_DEFAULTS_BY_ID.get(row.get("id", ""), row), text, len(row.get("options", [])))
+        existing_ids = {opt.get("id") for opt in row.get("options", [])}
+        base_id = option["id"]
+        counter = 2
+        while option["id"] in existing_ids:
+            option["id"] = f"{base_id}-{counter}"
+            counter += 1
+        row.setdefault("options", []).append(option)
+        self.selected_top_row_option_id_var.set(option["id"])
+        self.store.mark_dirty("top-row-option-added")
+        self.refresh_top_dropdown_values()
+        self.refresh_top_row_option_selector()
+        self.redraw_output()
+        self.schedule_autosave()
+
+    def duplicate_top_row_option(self) -> None:
+        row = self.selected_top_row()
+        option = self.selected_top_row_option()
+        if not row or not option:
+            return
+        new_option = copy.deepcopy(option)
+        new_option["id"] = f"{option.get('id', 'option')}-copy-{uuid.uuid4().hex[:6]}"
+        new_option["text"] = self.unique_top_row_option_text(row, f"{option.get('text', 'Option')} Copy")
+        row.setdefault("options", []).append(new_option)
+        self.selected_top_row_option_id_var.set(new_option["id"])
+        self.store.mark_dirty("top-row-option-duplicated")
+        self.refresh_top_dropdown_values()
+        self.refresh_top_row_option_selector()
+        self.redraw_output()
+        self.schedule_autosave()
+
+    def unique_top_row_option_text(self, row: dict, desired: str) -> str:
+        existing = {str(opt.get("text", "")).strip().casefold() for opt in row.get("options", [])}
+        text = desired.strip() or "Option"
+        if text.casefold() not in existing:
+            return text[:64]
+        counter = 2
+        while True:
+            candidate = f"{text} {counter}"
+            if candidate.casefold() not in existing:
+                return candidate[:64]
+            counter += 1
+
+    def move_top_row_option(self, direction: int) -> None:
+        row = self.selected_top_row()
+        option = self.selected_top_row_option()
+        if not row or not option:
+            return
+        options = row.get("options", [])
+        try:
+            idx = options.index(option)
+        except ValueError:
+            return
+        new_idx = max(0, min(len(options) - 1, idx + direction))
+        if new_idx == idx:
+            return
+        options[idx], options[new_idx] = options[new_idx], options[idx]
+        self.store.mark_dirty("top-row-option-moved")
+        self.refresh_top_dropdown_values()
+        self.refresh_top_row_option_selector()
+        self.schedule_autosave()
+
+    def delete_top_row_option(self) -> None:
+        row = self.selected_top_row()
+        option = self.selected_top_row_option()
+        if not row or not option:
+            return
+        options = row.get("options", [])
+        if len(options) <= 1:
+            messagebox.showwarning("Cannot delete last option", "Each top row must keep at least one option.")
+            return
+        text = str(option.get("text", "Option"))
+        if not messagebox.askyesno("Delete top row option", f"Delete this option?\n\n{text}"):
+            return
+        options.remove(option)
+        if options:
+            self.selected_top_row_option_id_var.set(options[min(0, len(options) - 1)].get("id", ""))
+        self.store.mark_dirty("top-row-option-deleted")
+        self.refresh_top_dropdown_values()
+        self.refresh_top_row_option_selector()
+        self.redraw_output()
+        self.schedule_autosave()
+
+    def show_top_row_option(self) -> None:
+        option = self.selected_top_row_option()
+        if not option:
+            return
+        option["visible"] = True
+        self.top_row_visible_var.set(True)
+        self.store.mark_dirty("top-row-option-shown")
+        self.refresh_top_dropdown_values()
+        self.refresh_top_row_option_selector()
+        self.redraw_output()
+        self.schedule_autosave()
+
+    def hide_top_row_option(self) -> None:
+        option = self.selected_top_row_option()
+        if not option:
+            return
+        option["visible"] = False
+        self.top_row_visible_var.set(False)
+        self.store.mark_dirty("top-row-option-hidden")
+        self.refresh_top_dropdown_values()
+        self.refresh_top_row_option_selector()
+        self.redraw_output()
+        self.schedule_autosave()
+
+    def use_selected_top_row_option_on_card(self) -> None:
+        row = self.selected_top_row()
+        option = self.selected_top_row_option()
+        if not row or not option:
+            return
+        value = str(option.get("text", "")).strip()
+        if not value:
+            return
+        field = row.get("field", "")
+        if field == "sourceType":
+            self.source_type_var.set(value)
+        elif field == "confidence":
+            self.confidence_var.set(value)
+        elif field == "verdict":
+            self.verdict_var.set(value)
+        self.apply_editor_to_card()
+        self.status_var.set("Option used on active card")
+
+    def default_top_row_option(self) -> None:
+        option = self.selected_top_row_option()
+        if not option:
+            return
+        option["text"] = str(option.get("default_text", option.get("text", "Option")))
+        option["color"] = normalize_hex_color(option.get("default_color", "#f0fff8"), "#f0fff8")
+        option["bar_color"] = normalize_hex_color(option.get("default_bar_color", "#00ff99"), "#00ff99")
+        option["font_size"] = int(option.get("default_font_size", 15))
+        option["visible"] = True
+        self.store.mark_dirty("top-row-option-defaulted")
+        self.refresh_top_dropdown_values()
+        self.refresh_top_row_option_selector()
+        self.redraw_output()
+        self.schedule_autosave()
+
+    def reset_selected_top_row_defaults(self) -> None:
+        row = self.selected_top_row()
+        if not row:
+            return
+        row_id = row.get("id", "")
+        default = TOP_ROW_DEFAULTS_BY_ID.get(row_id)
+        if not default:
+            return
+        if not messagebox.askyesno("Reset row defaults", "Reset this top row option list back to the default options?"):
+            return
+        fresh = default_top_rows()
+        fresh_row = next((item for item in fresh if item.get("id") == row_id), None)
+        if not fresh_row:
+            return
+        row.clear()
+        row.update(fresh_row)
+        self.selected_top_row_option_id_var.set(row.get("options", [{}])[0].get("id", ""))
+        self.store.mark_dirty("top-row-defaults-reset")
+        self.refresh_top_dropdown_values()
+        self.refresh_top_row_editor()
+        self.redraw_output()
+        self.schedule_autosave()
+
+    def choose_top_row_color(self, target: str = "text") -> None:
+        from tkinter import colorchooser
+        current = self.top_row_bar_color_var.get() if target == "bar" else self.top_row_text_color_var.get()
+        _rgb, hex_color = colorchooser.askcolor(color=current, title="Choose top row color")
+        if not hex_color:
+            return
+        if target == "bar":
+            self.top_row_bar_color_var.set(hex_color.lower())
+        else:
+            self.top_row_text_color_var.set(hex_color.lower())
+        self.apply_top_row_option()
+
+    def nudge_top_row_option(self, dx: int, dy: int) -> None:
+        option = self.selected_top_row_option()
+        if not option:
+            return
+        option["x"] = max(0, min(OUTPUT_WIDTH, int(option.get("x", 200)) + dx))
+        option["y"] = max(0, min(OUTPUT_HEIGHT, int(option.get("y", 96)) + dy))
+        self.top_row_x_var.set(int(option["x"]))
+        self.top_row_y_var.set(int(option["y"]))
+        self.store.mark_dirty("top-row-option-nudged")
+        self.redraw_output()
+        self.schedule_autosave()
 
     def display_text_objects(self) -> list[dict]:
         return ensure_display_text_storage(self.store.data)
@@ -2303,6 +2963,8 @@ class PerspectiveConsoleApp:
         card = self.store.active_card()
         self.card_label_var.set(card.get("label", card.get("id", "Card")))
         fields = card.get("fields", {})
+        self.ensure_current_card_values_are_options()
+        self.refresh_top_dropdown_values()
         self.source_type_var.set(fields.get("sourceType", "Unknown"))
         self.confidence_var.set(fields.get("confidence", "Still Checking"))
         self.verdict_var.set(fields.get("verdict", "Still Checking"))
@@ -2323,6 +2985,7 @@ class PerspectiveConsoleApp:
         self.refresh_sticker_selector()
         self.refresh_image_selector()
         self.refresh_text_layer_selector()
+        self.refresh_top_row_editor()
 
     def emoji_layers(self) -> list[dict]:
         card = self.store.active_card()
@@ -3186,6 +3849,8 @@ class PerspectiveConsoleApp:
         self.store.data["header"]["resource_profile"] = self.resource_profile_var.get()
         self.store.mark_dirty("editor-applied")
         self.apply_display_text_editor_without_reschedule()
+        self.apply_top_row_option_without_reschedule()
+        self.refresh_top_dropdown_values()
         self.refresh_deck_buttons()
         self.redraw_output()
         self.status_var.set("Applied")
@@ -3220,7 +3885,9 @@ class PerspectiveConsoleApp:
         self.autosave_after_id = None
         self.apply_editor_to_card_without_reschedule()
         display_changed = self.apply_display_text_editor_without_reschedule()
-        if display_changed:
+        top_row_changed = self.apply_top_row_option_without_reschedule()
+        if display_changed or top_row_changed:
+            self.refresh_top_dropdown_values()
             self.redraw_output()
         self.store.save("autosave")
         self.status_var.set("Autosaved")
@@ -3235,6 +3902,7 @@ class PerspectiveConsoleApp:
         self.store.data["under_header"]["scanner_color"] = self.scanner_color_var.get().strip() or "#00ff99"
         self.store.data["under_header"]["output_visible"] = bool(self.output_visible_var.get())
         self.store.data["header"]["resource_profile"] = self.resource_profile_var.get()
+        self.apply_top_row_option_without_reschedule()
         self.store.mark_dirty("editor-applied")
 
     def redraw_output(self) -> None:
@@ -3408,11 +4076,30 @@ class PerspectiveConsoleApp:
 
     def draw_row(self, canvas: tk.Canvas, label_id: str, value: str, accent: str, value_x: int, line_end: int) -> None:
         label_obj = self.display_text_object_by_id(label_id) or {}
-        y = int(label_obj.get("y", 96))
         self.draw_display_text(canvas, label_id)
-        canvas.create_text(value_x, y, anchor="w", text=value, fill="#f0fff8", font=("TkDefaultFont", 15, "bold"))
-        canvas.create_line(value_x, y + 15, max(value_x + 10, line_end), y + 15, fill="#1b2f2b")
-        canvas.create_rectangle(value_x - 8, y - 14, value_x - 4, y + 17, fill=accent, outline="")
+        row = self.top_row_by_label_id(label_id)
+        option = self.top_row_option_by_text(row, value)
+        if option and option.get("visible", True) is False:
+            return
+        y = int((option or {}).get("y", label_obj.get("y", 96)))
+        x = int((option or {}).get("x", value_x))
+        render_value = str((option or {}).get("text", value)).strip()
+        if not render_value:
+            return
+        color = normalize_hex_color((option or {}).get("color", "#f0fff8"), "#f0fff8")
+        bar_color = normalize_hex_color((option or {}).get("bar_color", accent), accent)
+        family = str((option or {}).get("font_family", "TkDefaultFont")) or "TkDefaultFont"
+        size = max(6, min(96, int((option or {}).get("font_size", 15))))
+        weight = str((option or {}).get("font_weight", "bold")) or "bold"
+        slant = str((option or {}).get("font_slant", "roman")) or "roman"
+        styles = []
+        if weight == "bold":
+            styles.append("bold")
+        if slant == "italic":
+            styles.append("italic")
+        canvas.create_text(x, y, anchor="w", text=render_value, fill=color, font=(family, size, *styles))
+        canvas.create_line(x, y + 15, max(x + 10, line_end), y + 15, fill=str((row or {}).get("line_color", "#1b2f2b")))
+        canvas.create_rectangle(x - 8, y - 14, x - 4, y + 17, fill=bar_color, outline="")
 
     def draw_boxed_text(self, canvas: tk.Canvas, x: int, y: int, label_id: str, value: str, width: int, height: int, accent: str, max_lines: int = 2) -> None:
         self.draw_display_text(canvas, label_id)
@@ -3730,6 +4417,8 @@ class PerspectiveConsoleApp:
         self.apply_text_layer_editor()
         self.apply_editor_to_card_without_reschedule()
         self.apply_display_text_editor_without_reschedule()
+        self.apply_top_row_option_without_reschedule()
+        self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         self.store.save("manual-save")
         self.redraw_output()
@@ -3741,6 +4430,8 @@ class PerspectiveConsoleApp:
             return
         self.apply_editor_to_card_without_reschedule()
         self.apply_display_text_editor_without_reschedule()
+        self.apply_top_row_option_without_reschedule()
+        self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         self.store.save_as(Path(path))
         self.status_var.set(f"Saved As: {Path(path).name}")
@@ -3875,6 +4566,8 @@ class PerspectiveConsoleApp:
         self.apply_text_layer_editor()
         self.apply_editor_to_card_without_reschedule()
         self.apply_display_text_editor_without_reschedule()
+        self.apply_top_row_option_without_reschedule()
+        self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         self.store.save("export-current-card")
 
@@ -3907,6 +4600,9 @@ class PerspectiveConsoleApp:
         self.apply_image_editor()
         self.apply_text_layer_editor()
         self.apply_editor_to_card_without_reschedule()
+        self.apply_display_text_editor_without_reschedule()
+        self.apply_top_row_option_without_reschedule()
+        self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         self.store.save("export-all-cards")
 
@@ -3961,6 +4657,8 @@ class PerspectiveConsoleApp:
         self.apply_text_layer_editor()
         self.apply_editor_to_card_without_reschedule()
         self.apply_display_text_editor_without_reschedule()
+        self.apply_top_row_option_without_reschedule()
+        self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         # Clear temporary duplicate archive before the windows close.
         # The archive exists during the session for review, then gets removed on clean shutdown.
