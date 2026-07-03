@@ -590,7 +590,7 @@ Some Linux desktop environments handle borderless or always-on-top windows diffe
 
 Deck Card Widget is a standalone public project evolved from the original **3DCP Perspective Console** concept and implementation approach.
 
-Original project history:
+Original project:
 
 https://github.com/DigiMancer3D/3DChangesPerspectives/tree/main/PerspectiveConsole
 
@@ -611,45 +611,8 @@ This standalone version focuses on reusable deck-card overlays, public-facing di
 
 ---
 
-## 🏷️ Suggested GitHub Repo Details
-
-### Description
-
-```text
-Low-resource Python/Tkinter deck-card overlay controller for OBS, with editable display labels, emoji/PNG/text layers, deck storage, and standalone .buttstore persistence.
-```
-
-### Topics / Tags
-
-```text
-deck-card-widget
-obs-overlay
-tkinter
-python
-streamer-tools
-vtuber-tools
-png-overlay
-emoji-presets
-deck-cards
-low-resource
-no-electron
-no-pygame
-window-capture
-tkinter-gui
-content-creator-tools
-overlay-controller
-display-edit
-buttstore
-deckbutt
-linux-desktop
-kubuntu
-arch-linux
-windows
-macos
-```
-
----
-
 ## 📌 Notes
 
 Deck Card Widget is meant to be easy to run, easy to customize, and easy to capture. It keeps the moving parts simple: one Python app, local files, a desktop GUI, and an OBS-visible output window.
+
+###### AI written Readme
