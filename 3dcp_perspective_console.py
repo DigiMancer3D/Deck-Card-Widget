@@ -4274,29 +4274,31 @@ class PerspectiveConsoleApp:
         self.store.mark_dirty("output-launch-recovery")
         self.schedule_autosave()
 
+
     def rescue_output_window(self) -> None:
         """Emergency recovery button for OBS output visibility."""
         self.output_borderless_var.set(False)
         self.output_topmost_var.set(False)
+
         try:
+            self.output.withdraw()
+            self.output.update_idletasks()
+            self._set_output_window_type_hint(False)
             self.output.overrideredirect(False)
-        except tk.TclError:
-            pass
-        try:
             self.output.attributes("-topmost", False)
-        except tk.TclError:
-            pass
-        try:
             self.output.geometry(DEFAULT_OUTPUT_GEOMETRY)
+            self.output.resizable(False, False)
+            self.output.deiconify()
+            self.output.geometry(DEFAULT_OUTPUT_GEOMETRY)
+            self.output.lift()
+            self.output.update_idletasks()
+            try:
+                self.output.focus_force()
+            except tk.TclError:
+                pass
         except tk.TclError:
             pass
-        self.output.deiconify()
-        self.output.lift()
-        self.output.update_idletasks()
-        try:
-            self.output.focus_force()
-        except tk.TclError:
-            pass
+
         self.output_visible_var.set(True)
         self.store.data["under_header"]["output_visible"] = True
         self.store.data["under_header"]["output_borderless"] = False
@@ -4306,37 +4308,76 @@ class PerspectiveConsoleApp:
         self.schedule_autosave()
         self.status_var.set("Output window rescued")
 
+
+    def _set_output_window_type_hint(self, borderless: bool) -> None:
+        """Best-effort X11/KWin hint for borderless OBS capture windows."""
+        try:
+            windowing = str(self.output.tk.call("tk", "windowingsystem"))
+        except tk.TclError:
+            return
+
+        if windowing != "x11":
+            return
+
+        try:
+            hint = "splash" if borderless else "normal"
+            self.output.tk.call("wm", "attributes", self.output._w, "-type", hint)
+        except tk.TclError:
+            pass
+
     def apply_output_window_style(self, save: bool = True) -> None:
-        """Apply OBS output window behavior after the window is visible."""
+        """Apply OBS output window behavior using a safe withdraw/remap cycle.
+
+        Tk only guarantees overrideredirect changes when the window is first
+        mapped, or when it is remapped from withdrawn back to normal.
+        """
+        borderless = bool(self.output_borderless_var.get())
+        topmost = bool(self.output_topmost_var.get())
+
         try:
             current_geo = self.output.geometry()
         except tk.TclError:
             current_geo = DEFAULT_OUTPUT_GEOMETRY
+
         if not is_safe_geometry(current_geo, OUTPUT_WIDTH, OUTPUT_HEIGHT):
             current_geo = DEFAULT_OUTPUT_GEOMETRY
 
-        # Always map and paint the window before toggling borderless.
-        self.output.deiconify()
-        self.output.title(OUTPUT_TITLE)
-        self.output.geometry(current_geo)
-        self.output.resizable(False, False)
-        self.output.update_idletasks()
-
         try:
-            self.output.overrideredirect(bool(self.output_borderless_var.get()))
+            self.output.withdraw()
+            self.output.update_idletasks()
+
+            self._set_output_window_type_hint(borderless)
+            self.output.overrideredirect(borderless)
+            self.output.geometry(current_geo)
+            self.output.resizable(False, False)
+
+            try:
+                self.output.attributes("-topmost", topmost)
+            except tk.TclError:
+                pass
+
+            self.output.deiconify()
             self.output.geometry(current_geo)
             self.output.update_idletasks()
-        except tk.TclError:
-            pass
+            self.output.lift()
 
-        try:
-            self.output.attributes("-topmost", bool(self.output_topmost_var.get()))
+            def finish_remap() -> None:
+                try:
+                    self.output.geometry(current_geo)
+                    self.output.resizable(False, False)
+                    if topmost:
+                        self.output.attributes("-topmost", True)
+                    self.output.lift()
+                except tk.TclError:
+                    pass
+
+            self.root.after(80, finish_remap)
         except tk.TclError:
             pass
 
         if save:
-            self.store.data["under_header"]["output_topmost"] = bool(self.output_topmost_var.get())
-            self.store.data["under_header"]["output_borderless"] = bool(self.output_borderless_var.get())
+            self.store.data["under_header"]["output_topmost"] = topmost
+            self.store.data["under_header"]["output_borderless"] = borderless
             self.store.data["under_header"]["output_geometry"] = current_geo
             self.store.mark_dirty("output-style-changed")
             self.schedule_autosave()
@@ -4368,20 +4409,22 @@ class PerspectiveConsoleApp:
         self.on_setting_changed()
         self.status_var.set("Output brought to front")
 
+
     def reset_output_window_position(self) -> None:
+        """Reset the OBS output window to safe normal framed mode."""
+        self.output_borderless_var.set(False)
+        self.output_topmost_var.set(False)
+
         try:
-            was_borderless = bool(self.output_borderless_var.get())
-            # Temporarily restore frame for predictable geometry reset.
-            if was_borderless:
-                self.output.overrideredirect(False)
             self.output.geometry(DEFAULT_OUTPUT_GEOMETRY)
-            if was_borderless:
-                self.output.update_idletasks()
-                self.output.overrideredirect(True)
-                self.output.geometry(DEFAULT_OUTPUT_GEOMETRY)
         except tk.TclError:
             pass
+
+        self.apply_output_window_style(save=False)
+
         self.store.data["under_header"]["output_geometry"] = DEFAULT_OUTPUT_GEOMETRY
+        self.store.data["under_header"]["output_borderless"] = False
+        self.store.data["under_header"]["output_topmost"] = False
         self.store.mark_dirty("output-window-reset")
         self.schedule_autosave()
         self.status_var.set("Output window reset")
