@@ -31,7 +31,7 @@ except Exception:
 
 APP_NAME = "Deck Card Widget"
 THEME_NAME = "Deck Card Widget Lab"
-APP_VERSION = "1.3.2-de1"
+APP_VERSION = "1.3.4-de1"
 BUTTSTORE_FORMAT = "3DCP-BUTTSTORE"
 BUTTSTORE_ABI = "3dcp.perspective_console.buttstore.v0"
 
@@ -1522,9 +1522,17 @@ class PerspectiveConsoleApp:
         self._syncing_deck_border_vars = False
         self.card_buttons = {}
         self.card_button_frames = {}
+        self.card_button_border_types = {}
         self.deck_button_frame = None
         self.deck_storage_listbox = None
         self.deck_storage_ids = []
+        # v1.3.4 sticky Deck Card Storage state. The list is model-backed and
+        # only rewritten when its actual rows change or when Tk unexpectedly
+        # loses the visible rows while the Notebook tab is hidden.
+        self.deck_storage_rows = ()
+        self.layer_notebook = None
+        self.deck_cards_tab = None
+        self._deck_storage_tab_sync_after_id = None
         self.pending_deck_swap = None
         self.max_deck_buttons = MAX_DECK_BUTTONS
         self.hotkeys_enabled_var = tk.BooleanVar(value=True)
@@ -1694,9 +1702,11 @@ class PerspectiveConsoleApp:
         self.open_question_text = tk.Text(right, height=4, wrap="word", undo=True)
         self.open_question_text.grid(row=12, column=0, columnspan=2, sticky="nsew")
         layer_notebook = ttk.Notebook(right)
+        self.layer_notebook = layer_notebook
         layer_notebook.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(12, 0))
 
         deck_frame = ttk.Frame(layer_notebook, padding=8)
+        self.deck_cards_tab = deck_frame
         sticker_frame = ttk.Frame(layer_notebook, padding=8)
         image_frame = ttk.Frame(layer_notebook, padding=8)
         text_layer_frame = ttk.Frame(layer_notebook, padding=8)
@@ -1773,6 +1783,10 @@ class PerspectiveConsoleApp:
         deck_storage_scroll = ttk.Scrollbar(deck_storage_frame, orient="vertical", command=self.deck_storage_listbox.yview)
         deck_storage_scroll.grid(row=0, column=1, sticky="ns")
         self.deck_storage_listbox.configure(yscrollcommand=deck_storage_scroll.set)
+        # The first sidebar refresh occurs before this Listbox exists. Populate
+        # the storage rows now that the real widget has been constructed.
+        self.refresh_deck_storage(force=True)
+        layer_notebook.bind("<<NotebookTabChanged>>", self.on_layer_notebook_tab_changed, add="+")
 
         deck_swap_buttons = ttk.Frame(deck_right)
         deck_swap_buttons.grid(row=2, column=0, sticky="ew", pady=(6, 0))
@@ -3567,52 +3581,215 @@ class PerspectiveConsoleApp:
         card["deck_border_type"] = selected if turn_on else ""
         self.sync_deck_border_checkboxes()
         self.store.mark_dirty("deck-button-border-updated")
-        self.refresh_deck_buttons()
+        self.update_deck_button_visuals()
         self.schedule_autosave()
 
     def clear_deck_border(self) -> None:
         self.store.active_card()["deck_border_type"] = ""
         self.sync_deck_border_checkboxes()
         self.store.mark_dirty("deck-button-border-cleared")
-        self.refresh_deck_buttons()
+        self.update_deck_button_visuals()
         self.schedule_autosave()
 
     def refresh_deck_buttons(self) -> None:
+        """Reconcile sidebar Deck buttons without destroying stable widgets.
+
+        Older builds rebuilt every button whenever editor data was applied. On Tk
+        themes this exposed the construction/repaint sequence as a blank, dark,
+        light, then recolored flash. Keeping each card's widgets alive lets normal
+        card selection, text edits, and wrap changes update only their properties.
+        """
         if self.deck_button_frame is None:
             return
-        for child in self.deck_button_frame.winfo_children():
-            child.destroy()
-        self.card_buttons = {}
-        self.card_button_frames = {}
-        active_id = self.store.data["header"].get("active_card_id", "")
-        for card in self.store.cards()[:self.max_deck_buttons]:
-            cid = card.get("id", "")
-            label = card.get("label", cid or "Card")
+
+        desired_cards = list(self.store.cards()[:self.max_deck_buttons])
+        desired_ids = [str(card.get("id", "")) for card in desired_cards]
+        desired_id_set = set(desired_ids)
+
+        # Remove only cards that truly left the visible sidebar. Never clear the
+        # complete frame during an ordinary data or active-card update.
+        for cid in list(self.card_buttons):
+            if cid in desired_id_set:
+                continue
+            outer = self.card_button_frames.pop(cid, None)
+            self.card_buttons.pop(cid, None)
+            self.card_button_border_types.pop(cid, None)
+            if outer is not None and outer.winfo_exists():
+                outer.destroy()
+
+        self.deck_button_frame.columnconfigure(0, weight=1)
+        active_id = str(self.store.data["header"].get("active_card_id", ""))
+
+        for row, card in enumerate(desired_cards):
+            cid = str(card.get("id", ""))
+            label = str(card.get("label", cid or "Card"))
             text = ("▶ " if cid == active_id else "  ") + label
             border_type = normalize_deck_border_type(card.get("deck_border_type", ""))
             border_color = DECK_BORDER_STYLES.get(border_type, {}).get("color", "#4b4f56")
-            outer = tk.Frame(self.deck_button_frame, bg=border_color, bd=0, highlightthickness=0)
-            outer.pack(fill="x", pady=3)
-            btn = ttk.Button(outer, text=text, command=lambda selected=cid: self.on_deck_button_clicked(selected), width=24)
-            if border_type:
-                btn.pack(fill="x", padx=DECK_BORDER_WIDTH, pady=DECK_BORDER_WIDTH)
-            else:
-                btn.pack(fill="x")
-            self.card_buttons[cid] = btn
-            self.card_button_frames[cid] = outer
+
+            outer = self.card_button_frames.get(cid)
+            btn = self.card_buttons.get(cid)
+            if outer is None or btn is None or not outer.winfo_exists() or not btn.winfo_exists():
+                outer = tk.Frame(self.deck_button_frame, bg=border_color, bd=0, highlightthickness=0)
+                outer.grid(row=row, column=0, sticky="ew", pady=3)
+                btn = ttk.Button(
+                    outer,
+                    text=text,
+                    command=lambda selected=cid: self.on_deck_button_clicked(selected),
+                    width=24,
+                )
+                if border_type:
+                    btn.pack(fill="x", padx=DECK_BORDER_WIDTH, pady=DECK_BORDER_WIDTH)
+                else:
+                    btn.pack(fill="x")
+                self.card_buttons[cid] = btn
+                self.card_button_frames[cid] = outer
+                self.card_button_border_types[cid] = border_type
+                continue
+
+            # Grid row changes reorder persistent frames without tearing down the
+            # sidebar. Text and active markers are changed only when necessary.
+            outer.grid_configure(row=row, column=0, sticky="ew", pady=3)
+            if str(btn.cget("text")) != text:
+                btn.configure(text=text)
+
+            previous_border_type = self.card_button_border_types.get(cid)
+            if str(outer.cget("bg")) != border_color:
+                outer.configure(bg=border_color)
+            if previous_border_type != border_type:
+                if border_type:
+                    btn.pack_configure(fill="x", padx=DECK_BORDER_WIDTH, pady=DECK_BORDER_WIDTH)
+                else:
+                    btn.pack_configure(fill="x", padx=0, pady=0)
+                self.card_button_border_types[cid] = border_type
+
+        # Keep mapping order aligned with the visible grid order so ordinary
+        # visual-only updates can detect a stable sidebar without touching layout.
+        self.card_buttons = {cid: self.card_buttons[cid] for cid in desired_ids if cid in self.card_buttons}
+        self.card_button_frames = {cid: self.card_button_frames[cid] for cid in desired_ids if cid in self.card_button_frames}
+        self.card_button_border_types = {
+            cid: self.card_button_border_types.get(cid, "") for cid in desired_ids if cid in self.card_buttons
+        }
         self.refresh_deck_storage()
 
-    def refresh_deck_storage(self) -> None:
-        if self.deck_storage_listbox is None:
+    def update_deck_button_visuals(self) -> None:
+        """Update active markers, labels, and borders without layout changes."""
+        desired_cards = list(self.store.cards()[:self.max_deck_buttons])
+        desired_ids = [str(card.get("id", "")) for card in desired_cards]
+        if list(self.card_buttons) != desired_ids:
+            self.refresh_deck_buttons()
             return
-        self.deck_storage_listbox.delete(0, "end")
-        self.deck_storage_ids = []
+
+        active_id = str(self.store.data["header"].get("active_card_id", ""))
+        for card in desired_cards:
+            cid = str(card.get("id", ""))
+            btn = self.card_buttons.get(cid)
+            outer = self.card_button_frames.get(cid)
+            if btn is None or outer is None or not btn.winfo_exists() or not outer.winfo_exists():
+                self.refresh_deck_buttons()
+                return
+
+            label = str(card.get("label", cid or "Card"))
+            text = ("▶ " if cid == active_id else "  ") + label
+            if str(btn.cget("text")) != text:
+                btn.configure(text=text)
+
+            border_type = normalize_deck_border_type(card.get("deck_border_type", ""))
+            border_color = DECK_BORDER_STYLES.get(border_type, {}).get("color", "#4b4f56")
+            if str(outer.cget("bg")) != border_color:
+                outer.configure(bg=border_color)
+            if self.card_button_border_types.get(cid) != border_type:
+                if border_type:
+                    btn.pack_configure(fill="x", padx=DECK_BORDER_WIDTH, pady=DECK_BORDER_WIDTH)
+                else:
+                    btn.pack_configure(fill="x", padx=0, pady=0)
+                self.card_button_border_types[cid] = border_type
+
+        # This is a cheap no-op when rows are unchanged. It keeps label/active
+        # metadata and any unexpectedly lost visible Listbox rows synchronized.
+        self.refresh_deck_storage()
+
+    def deck_storage_model_rows(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Return storage card ids and rendered rows from the .buttstore model."""
+        active_id = str(self.store.data["header"].get("active_card_id", ""))
+        ids: list[str] = []
+        rows: list[str] = []
         for idx, card in enumerate(self.store.cards()[self.max_deck_buttons:], start=self.max_deck_buttons):
-            cid = card.get("id", "")
-            label = card.get("label", cid or "Card")
-            active_mark = "▶ " if cid == self.store.data["header"].get("active_card_id", "") else "  "
-            self.deck_storage_ids.append(cid)
-            self.deck_storage_listbox.insert("end", f"{active_mark}{idx + 1}. {label}")
+            cid = str(card.get("id", ""))
+            label = str(card.get("label", cid or "Card"))
+            active_mark = "▶ " if cid == active_id else "  "
+            ids.append(cid)
+            rows.append(f"{active_mark}{idx + 1}. {label}")
+        return tuple(ids), tuple(rows)
+
+    def refresh_deck_storage(self, force: bool = False) -> bool:
+        """Synchronize Deck Card Storage only when its real contents changed.
+
+        v1.3.3 moved sidebar Deck buttons to persistent widgets, but its first
+        refresh still ran before the storage Listbox was constructed. This left
+        the list blank at launch. A model/visible-row comparison now keeps the
+        display sticky and also repairs a platform-side row loss after a hidden
+        Notebook tab is shown again, without polling or repeated repaint work.
+        """
+        if self.deck_storage_listbox is None:
+            return False
+
+        desired_ids, desired_rows = self.deck_storage_model_rows()
+        try:
+            visible_rows = tuple(str(row) for row in self.deck_storage_listbox.get(0, "end"))
+        except tk.TclError:
+            visible_rows = ()
+
+        if (
+            not force
+            and tuple(self.deck_storage_ids) == desired_ids
+            and tuple(self.deck_storage_rows) == desired_rows
+            and visible_rows == desired_rows
+        ):
+            return False
+
+        selected_id = self.selected_storage_card_id()
+        try:
+            first_visible = self.deck_storage_listbox.nearest(0)
+        except tk.TclError:
+            first_visible = 0
+
+        self.deck_storage_listbox.delete(0, "end")
+        for row in desired_rows:
+            self.deck_storage_listbox.insert("end", row)
+
+        self.deck_storage_ids = list(desired_ids)
+        self.deck_storage_rows = desired_rows
+
+        if selected_id and selected_id in desired_ids:
+            selected_index = desired_ids.index(selected_id)
+            self.deck_storage_listbox.selection_set(selected_index)
+            self.deck_storage_listbox.activate(selected_index)
+        if desired_rows:
+            self.deck_storage_listbox.see(min(max(0, first_visible), len(desired_rows) - 1))
+        return True
+
+    def ensure_deck_storage_visible(self) -> None:
+        """One-shot repair when the Deck Cards Notebook tab becomes visible."""
+        self._deck_storage_tab_sync_after_id = None
+        self.refresh_deck_storage()
+
+    def on_layer_notebook_tab_changed(self, _event: tk.Event | None = None) -> None:
+        """Restore model-backed storage rows only when Deck Cards is selected."""
+        if self.layer_notebook is None or self.deck_cards_tab is None:
+            return
+        try:
+            selected_tab = self.layer_notebook.select()
+        except tk.TclError:
+            return
+        if selected_tab != str(self.deck_cards_tab):
+            return
+        if self._deck_storage_tab_sync_after_id is not None:
+            try:
+                self.root.after_cancel(self._deck_storage_tab_sync_after_id)
+            except tk.TclError:
+                pass
+        self._deck_storage_tab_sync_after_id = self.root.after_idle(self.ensure_deck_storage_visible)
 
     def selected_storage_card_id(self) -> str | None:
         if self.deck_storage_listbox is None:
@@ -3883,10 +4060,7 @@ class PerspectiveConsoleApp:
             text_widget.delete("1.0", "end")
             text_widget.insert("1.0", value)
             text_widget.edit_modified(False)
-        active_id = card.get("id")
-        for cid, btn in self.card_buttons.items():
-            label = self.store.get_card(cid).get("label", cid)
-            btn.configure(text=("▶ " if cid == active_id else "  ") + label)
+        self.update_deck_button_visuals()
 
         self.refresh_sticker_selector()
         self.refresh_image_selector()
@@ -4952,7 +5126,7 @@ class PerspectiveConsoleApp:
         self.apply_top_row_option_without_reschedule()
         self.apply_qr_group_without_reschedule()
         self.refresh_top_dropdown_values()
-        self.refresh_deck_buttons()
+        self.update_deck_button_visuals()
         self.redraw_output()
         self.status_var.set("Applied")
         self.schedule_autosave()
