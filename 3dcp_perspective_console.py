@@ -18,17 +18,20 @@ from urllib.parse import urlparse
 
 try:
     import qrcode
-    from PIL import Image, ImageTk
+    from PIL import Image, ImageTk, ImageOps, ImageDraw, ImageFont
     QR_AVAILABLE = True
 except Exception:
     qrcode = None
     Image = None
     ImageTk = None
+    ImageOps = None
+    ImageDraw = None
+    ImageFont = None
     QR_AVAILABLE = False
 
 APP_NAME = "Deck Card Widget"
 THEME_NAME = "Deck Card Widget Lab"
-APP_VERSION = "1.1.1-de2"
+APP_VERSION = "1.3.2-de1"
 BUTTSTORE_FORMAT = "3DCP-BUTTSTORE"
 BUTTSTORE_ABI = "3dcp.perspective_console.buttstore.v0"
 
@@ -137,6 +140,115 @@ OUTPUT_WIDTH = 960
 OUTPUT_HEIGHT = 500
 DEFAULT_CONTROLLER_GEOMETRY = "1083x874+80+80"
 DEFAULT_OUTPUT_GEOMETRY = f"{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}+80+80"
+
+MAX_DECK_BUTTONS = 8
+DECK_BORDER_STYLES = {
+    "SPONSOR": {"color": "#ff2424", "label": "SPONSOR"},
+    "PARTNER": {"color": "#2f78ff", "label": "PARTNER"},
+    "DEETS": {"color": "#a34dff", "label": "DEETS"},
+    "FAN": {"color": "#38b86b", "label": "FAN"},
+    "SPECIAL": {"color": "#ff5ca8", "label": "SPECIAL"},
+    "UNI": {"color": "#26d9e8", "label": "UNI"},
+    "OBS": {"color": "#ff00ff", "label": "OBS"},
+}
+DECK_BORDER_WIDTH = 5
+
+QR_GROUP_DEFAULTS = {
+    # Top-left of the QR square. These values reproduce the pre-v1.2 layout.
+    "x": 542,
+    "y": 92,
+    "size": 92,
+    "foreground": "#000000",
+    "background": "#ffffff",
+    "outline": "#d8e2de",
+    # QR label is a linked vector from the QR square's top-left point.
+    "label_offset_x": 46,
+    "label_offset_y": -8,
+    # Default z=0 preserves the old behavior: above the base card, below stickers.
+    "z": 0,
+    "default_z": 0,
+}
+
+# Bitninja Dark is the original Deck Card Widget output theme. Theme roles are
+# stored globally in each .buttstore and repaired additively so older data keeps
+# working without replacing cards, layers, or user-authored text.
+BITNINJA_DARK_THEME = {
+    "output_background": {"label": "Output background", "color": "#121418", "group": "Canvas"},
+    "main_panel_background": {"label": "Main console panel", "color": "#10151b", "group": "Canvas"},
+    "info_panel_background": {"label": "Top rows panel", "color": "#0c1116", "group": "Canvas"},
+    "blank_background": {"label": "Blank card background", "color": "#07090c", "group": "Canvas"},
+    "main_border": {"label": "Main console border", "color": "#26333a", "group": "Lines"},
+    "standard_line": {"label": "Standard divider line", "color": "#203037", "group": "Lines"},
+    "top_row_line": {"label": "Top Rows underline", "color": "#1b2f2b", "group": "Lines"},
+    "box_background": {"label": "Boxed content background", "color": "#111920", "group": "Boxes"},
+    "box_border": {"label": "Boxed content border", "color": "#203037", "group": "Boxes"},
+    "standard_text": {"label": "Standard text", "color": "#e8fff5", "group": "Text"},
+    "secondary_text": {"label": "Secondary text", "color": "#8aa39b", "group": "Text"},
+    "muted_text": {"label": "Muted text", "color": "#668078", "group": "Text"},
+    "dim_text": {"label": "Dim text", "color": "#445953", "group": "Text"},
+    "box_text": {"label": "Boxed content text", "color": "#f1fff9", "group": "Text"},
+    "top_row_text": {"label": "Top Rows value text", "color": "#f0fff8", "group": "Text"},
+    "accent": {"label": "Accent / scanner", "color": "#00ff99", "group": "Accent"},
+    "scan_trail": {"label": "Scanner trail", "color": "#17362b", "group": "Accent"},
+    "qr_outline": {"label": "QR outline", "color": "#d8e2de", "group": "Accent"},
+}
+THEME_PRESET_COLORS = {
+    "Bitninja Green": "#00ff99",
+    "Main Charcoal": "#121418",
+    "Panel Charcoal": "#10151b",
+    "Standard Text": "#e8fff5",
+    "Secondary Text": "#8aa39b",
+    "Standard Line": "#203037",
+    "Top Row Line": "#1b2f2b",
+    "Top Row Text": "#f0fff8",
+    "Scanner Trail": "#17362b",
+    "White": "#ffffff",
+    "Black": "#000000",
+    "Sponsor Red": "#ff2424",
+    "Partner Blue": "#2f78ff",
+    "Deets Purple": "#a34dff",
+    "Fan Green": "#38b86b",
+    "Special Pink": "#ff5ca8",
+    "Uni Cyan": "#26d9e8",
+    "OBS Magenta": "#ff00ff",
+}
+# Boxed-content geometry is derived from the real output region instead of a
+# historical fixed 830 px ceiling. Decorative/sticker/image/text layers are
+# intentionally ignored: they may cover content for live reveals, but they do
+# not reduce the boxed content region itself.
+BOX_WRAP_MIN = 120
+BOX_WRAP_LEGACY_MAX = 830
+BOX_WRAP_MODEL = "output-region-v2-canvas-native"
+BOXED_CONTENT_TEXT_LEFT_PAD = 14
+BOXED_CONTENT_TEXT_RIGHT_PAD = 12
+BOXED_CONTENT_LAYOUTS = {
+    "claim": {"x": 52, "y": 232, "height": 62, "right_margin": 24, "label_id": "box_claim_label", "field": "claim"},
+    "evidence": {"x": 52, "y": 322, "height": 62, "right_margin": 24, "label_id": "box_evidence_label", "field": "evidence"},
+    "openQuestion": {"x": 52, "y": 412, "height": 58, "right_margin": 24, "label_id": "box_question_label", "field": "openQuestion"},
+}
+
+def boxed_content_geometry(key: str) -> dict:
+    base = BOXED_CONTENT_LAYOUTS[key]
+    x = int(base["x"])
+    right_x = OUTPUT_WIDTH - int(base["right_margin"])
+    width = max(1, right_x - x)
+    return {**base, "x": x, "right_x": right_x, "width": width}
+
+def boxed_content_wrap_limit(key: str) -> int:
+    geometry = boxed_content_geometry(key)
+    text_start_x = geometry["x"] + BOXED_CONTENT_TEXT_LEFT_PAD
+    text_end_x = geometry["right_x"] - BOXED_CONTENT_TEXT_RIGHT_PAD
+    return max(BOX_WRAP_MIN, text_end_x - text_start_x)
+
+def normalize_box_wrap_width(key: str, value) -> int:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        numeric = boxed_content_wrap_limit(key)
+    return max(BOX_WRAP_MIN, min(boxed_content_wrap_limit(key), numeric))
+
+BOX_WRAP_MAXES = {key: boxed_content_wrap_limit(key) for key in BOXED_CONTENT_LAYOUTS}
+BOX_WRAP_DEFAULTS = copy.deepcopy(BOX_WRAP_MAXES)
 
 RESOURCE_PROFILES = {
     "low": {"label": "Low resources", "scan_ms": 67, "max_scan_fps": 15, "autosave_delay_ms": 1500},
@@ -247,11 +359,14 @@ def blend_hex_colors(fg_hex: str, bg_hex: str, opacity: float) -> str:
 
 def new_card(card_type: str = "source_analyzer", label: str = "Widget Card") -> dict:
     if card_type == "blank":
-        return {"id": "blank-hide", "label": "Blank / Hide", "type": "blank", "fields": {}, "layers": []}
+        return {"id": "blank-hide", "label": "Blank / Hide", "type": "blank", "fields": {}, "layers": [], "deck_border_type": "", "box_wrap_widths": copy.deepcopy(BOX_WRAP_DEFAULTS), "box_wrap_model": BOX_WRAP_MODEL}
     return {
         "id": "source-analyzer",
         "label": label,
         "type": "source_analyzer",
+        "deck_border_type": "",
+        "box_wrap_widths": copy.deepcopy(BOX_WRAP_DEFAULTS),
+        "box_wrap_model": BOX_WRAP_MODEL,
         "fields": {
             "sourceType": "Primary",
             "confidence": "Medium",
@@ -427,8 +542,8 @@ DISPLAY_TEXT_DEFAULTS = [
     },
     {
         "id": "host_label",
-        "label": "Host Label",
-        "text": "HOST: {host}",
+        "label": "QR Location",
+        "text": "QR LOC: {host}",
         "old_text": "HOST: {host}",
         "x": 898,
         "y": 172,
@@ -445,7 +560,7 @@ DISPLAY_TEXT_DEFAULTS = [
     },
     {
         "id": "box_claim_label",
-        "label": "Box Label - Claim",
+        "label": "Box Label #1",
         "text": "CARD CLAIM:",
         "old_text": "CURRENT CLAIM:",
         "x": 52,
@@ -462,7 +577,7 @@ DISPLAY_TEXT_DEFAULTS = [
     },
     {
         "id": "box_evidence_label",
-        "label": "Box Label - Evidence",
+        "label": "Box Label #2",
         "text": "CARD EVIDENCE:",
         "old_text": "EVIDENCE SHOWN:",
         "x": 52,
@@ -479,7 +594,7 @@ DISPLAY_TEXT_DEFAULTS = [
     },
     {
         "id": "box_question_label",
-        "label": "Box Label - Question",
+        "label": "Box Label #3",
         "text": "OPEN QUESTION:",
         "old_text": "OPEN QUESTION:",
         "x": 52,
@@ -712,8 +827,134 @@ def ensure_display_text_storage(data: dict) -> list[dict]:
             merged[key] = value
         # Keep defaults fresh for new public baseline while preserving user edits above.
         repaired.append(merged)
+    # v1.3 naming migration: preserve genuine custom text, but upgrade the
+    # untouched historical HOST template to the requested QR LOC wording.
+    for obj in repaired:
+        if obj.get("id") == "host_label" and str(obj.get("text", "")).strip() == "HOST: {host}":
+            obj["text"] = "QR LOC: {host}"
     header["display_text"] = repaired
     return repaired
+
+
+def default_theme_colors() -> dict:
+    return {role: spec["color"] for role, spec in BITNINJA_DARK_THEME.items()}
+
+
+def ensure_theme_color_storage(data: dict) -> dict:
+    header = data.setdefault("header", {})
+    stored = header.get("theme_colors")
+    repaired = default_theme_colors()
+    if isinstance(stored, dict):
+        for role, value in stored.items():
+            if role in repaired:
+                repaired[role] = normalize_hex_color(str(value), repaired[role])
+    # The output background predates theme storage; keep a genuinely customized
+    # value during first migration instead of replacing it with the default.
+    output = header.setdefault("output", {"width": OUTPUT_WIDTH, "height": OUTPUT_HEIGHT, "background": "#121418", "title": OUTPUT_TITLE})
+    if not isinstance(stored, dict):
+        repaired["output_background"] = normalize_hex_color(str(output.get("background", repaired["output_background"])), repaired["output_background"])
+    output["background"] = repaired["output_background"]
+    header["theme_colors"] = repaired
+    return repaired
+
+
+def ensure_box_wrap_storage(card: dict) -> dict:
+    stored = card.get("box_wrap_widths")
+    prior_model = str(card.get("box_wrap_model", ""))
+    repaired = copy.deepcopy(BOX_WRAP_DEFAULTS)
+    if isinstance(stored, dict):
+        for key in repaired:
+            raw_value = stored.get(key, repaired[key])
+            try:
+                numeric = int(raw_value)
+            except (TypeError, ValueError):
+                numeric = repaired[key]
+            # v1.3.1 migration: 830 represented "use all available room" in
+            # the old fixed-ceiling model. Carry that intent forward to the
+            # new geometry-derived maximum; preserve every narrower custom value.
+            if prior_model != BOX_WRAP_MODEL and numeric == BOX_WRAP_LEGACY_MAX:
+                numeric = boxed_content_wrap_limit(key)
+            repaired[key] = normalize_box_wrap_width(key, numeric)
+    card["box_wrap_widths"] = repaired
+    card["box_wrap_model"] = BOX_WRAP_MODEL
+    return repaired
+
+
+def ensure_qr_group_storage(data: dict) -> dict:
+    """Create/repair global QR layout settings without replacing user card data."""
+    header = data.setdefault("header", {})
+    existing = header.get("qr_group")
+    first_migration = not isinstance(existing, dict)
+    merged = copy.deepcopy(QR_GROUP_DEFAULTS)
+    if isinstance(existing, dict):
+        merged.update(existing)
+
+    try:
+        size = max(48, min(260, int(merged.get("size", QR_GROUP_DEFAULTS["size"]))))
+    except (TypeError, ValueError):
+        size = QR_GROUP_DEFAULTS["size"]
+    try:
+        x = max(0, min(OUTPUT_WIDTH - size, int(merged.get("x", QR_GROUP_DEFAULTS["x"]))))
+        y = max(0, min(OUTPUT_HEIGHT - size, int(merged.get("y", QR_GROUP_DEFAULTS["y"]))))
+    except (TypeError, ValueError):
+        x, y = QR_GROUP_DEFAULTS["x"], QR_GROUP_DEFAULTS["y"]
+    try:
+        z = max(-1000, min(1000, int(merged.get("z", QR_GROUP_DEFAULTS["z"]))))
+    except (TypeError, ValueError):
+        z = QR_GROUP_DEFAULTS["z"]
+    try:
+        default_z = max(-1000, min(1000, int(merged.get("default_z", QR_GROUP_DEFAULTS["default_z"]))))
+    except (TypeError, ValueError):
+        default_z = QR_GROUP_DEFAULTS["default_z"]
+
+    merged.update({
+        "x": x,
+        "y": y,
+        "size": size,
+        "z": z,
+        "default_z": default_z,
+        "foreground": normalize_hex_color(str(merged.get("foreground", "#000000")), "#000000"),
+        "background": normalize_hex_color(str(merged.get("background", "#ffffff")), "#ffffff"),
+        "outline": normalize_hex_color(str(merged.get("outline", "#d8e2de")), "#d8e2de"),
+    })
+
+    # Existing v1.1 QR-label X was a fallback (normally 0) because render-time code
+    # overrode it. Honor a genuinely edited X/Y during first migration; otherwise
+    # reconstruct the historical centered-above-QR vector.
+    label_obj = None
+    for obj in header.get("display_text", []):
+        if isinstance(obj, dict) and obj.get("id") == "qr_label":
+            label_obj = obj
+            break
+    if first_migration and label_obj is not None:
+        try:
+            old_x = int(label_obj.get("x", 0))
+            old_y = int(label_obj.get("y", 84))
+        except (TypeError, ValueError):
+            old_x, old_y = 0, 84
+        if old_x != 0:
+            merged["label_offset_x"] = old_x - x
+            merged["label_offset_y"] = old_y - y
+
+    try:
+        merged["label_offset_x"] = max(-OUTPUT_WIDTH, min(OUTPUT_WIDTH, int(merged.get("label_offset_x", QR_GROUP_DEFAULTS["label_offset_x"]))))
+        merged["label_offset_y"] = max(-OUTPUT_HEIGHT, min(OUTPUT_HEIGHT, int(merged.get("label_offset_y", QR_GROUP_DEFAULTS["label_offset_y"]))))
+    except (TypeError, ValueError):
+        merged["label_offset_x"] = QR_GROUP_DEFAULTS["label_offset_x"]
+        merged["label_offset_y"] = QR_GROUP_DEFAULTS["label_offset_y"]
+
+    header["qr_group"] = merged
+    if label_obj is not None:
+        label_obj["x"] = x + int(merged["label_offset_x"])
+        label_obj["y"] = y + int(merged["label_offset_y"])
+        label_obj["notes"] = "Position is linked to header.qr_group through label_offset_x/label_offset_y."
+    return merged
+
+
+def normalize_deck_border_type(value: str) -> str:
+    value = str(value or "").strip().upper()
+    return value if value in DECK_BORDER_STYLES else ""
+
 
 def make_default_buttstore(preserve_footer: dict | None = None) -> dict:
     now = utc_now()
@@ -745,6 +986,8 @@ def make_default_buttstore(preserve_footer: dict | None = None) -> dict:
             "output": {"width": OUTPUT_WIDTH, "height": OUTPUT_HEIGHT, "background": "#121418", "title": OUTPUT_TITLE},
             "display_text": default_display_text_objects(),
             "top_rows": default_top_rows(),
+            "qr_group": copy.deepcopy(QR_GROUP_DEFAULTS),
+            "theme_colors": default_theme_colors(),
             "quick_cards": [{"id": c["id"], "label": c["label"], "type": c["type"]} for c in cards],
         },
         "under_header": {
@@ -950,6 +1193,7 @@ class ButtStore:
 
     @staticmethod
     def validate_or_repair(data: dict) -> None:
+        changed = False
         if data.get("buttstore_format") != BUTTSTORE_FORMAT:
             raise ValueError("This file is not a 3DCP .buttstore file.")
         data.setdefault("version", APP_VERSION)
@@ -970,6 +1214,8 @@ class ButtStore:
         header.setdefault("output", {"width": OUTPUT_WIDTH, "height": OUTPUT_HEIGHT, "background": "#121418", "title": OUTPUT_TITLE})
         ensure_display_text_storage(data)
         ensure_top_row_storage(data)
+        ensure_qr_group_storage(data)
+        ensure_theme_color_storage(data)
         under = data["under_header"]
         under.setdefault("dirty", False)
         under.setdefault("output_visible", True)
@@ -996,6 +1242,8 @@ class ButtStore:
         for card in body["cards"]:
             fields = card.setdefault("fields", {})
             card.setdefault("layers", [])
+            card["deck_border_type"] = normalize_deck_border_type(card.get("deck_border_type", ""))
+            ensure_box_wrap_storage(card)
             if card.get("type") == "source_analyzer":
                 fields.setdefault("sourceType", "Unknown")
                 fields.setdefault("confidence", "Still Checking")
@@ -1023,6 +1271,10 @@ class ButtStore:
                     layer.setdefault("source_path", "")
                     layer.setdefault("scale", 100)
                     layer.setdefault("opacity", 1.0)
+                    layer.setdefault("rotation", 0)
+                    layer.setdefault("flip_x", False)
+                    layer.setdefault("flip_y", False)
+                    layer.setdefault("z", 0)
                     image_index += 1
                 elif layer.get("type") == "text":
                     layer.setdefault("visible", True)
@@ -1033,6 +1285,10 @@ class ButtStore:
                     layer.setdefault("color", "#e8fff5")
                     layer.setdefault("opacity", 1.0)
                     layer.setdefault("wrap_width", 260)
+                    layer.setdefault("rotation", 0)
+                    layer.setdefault("flip_x", False)
+                    layer.setdefault("flip_y", False)
+                    layer.setdefault("z", 0)
                     text_index += 1
         footer = data["footer"]
         footer.setdefault("serial", 1)
@@ -1141,6 +1397,9 @@ class PerspectiveConsoleApp:
         self.source_link_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Ready")
         self.card_label_var = tk.StringVar(value="Widget Card")
+        self.claim_wrap_var = tk.IntVar(value=BOX_WRAP_DEFAULTS["claim"])
+        self.evidence_wrap_var = tk.IntVar(value=BOX_WRAP_DEFAULTS["evidence"])
+        self.question_wrap_var = tk.IntVar(value=BOX_WRAP_DEFAULTS["openQuestion"])
 
         # v0.3.1 emoji sticker editor state
         self.selected_sticker_id_var = tk.StringVar(value="")
@@ -1163,9 +1422,15 @@ class PerspectiveConsoleApp:
         self.image_y_var = tk.IntVar(value=245)
         self.image_scale_var = tk.IntVar(value=100)
         self.image_opacity_var = tk.DoubleVar(value=1.0)
+        self.image_rotation_var = tk.IntVar(value=0)
+        self.image_flip_x_var = tk.BooleanVar(value=False)
+        self.image_flip_y_var = tk.BooleanVar(value=False)
+        self.image_z_var = tk.IntVar(value=0)
         self.image_path_var = tk.StringVar(value="")
+        self.imported_image_library_var = tk.StringVar(value="")
         self.image_label_to_id = {}
         self.image_selector = None
+        self.imported_image_selector = None
         self.render_image_refs = []
         self.base_image_cache = {}
         self.rendered_image_cache = {}
@@ -1180,9 +1445,14 @@ class PerspectiveConsoleApp:
         self.text_layer_opacity_var = tk.DoubleVar(value=1.0)
         self.text_layer_color_var = tk.StringVar(value="#e8fff5")
         self.text_layer_wrap_var = tk.IntVar(value=260)
+        self.text_layer_rotation_var = tk.IntVar(value=0)
+        self.text_layer_flip_x_var = tk.BooleanVar(value=False)
+        self.text_layer_flip_y_var = tk.BooleanVar(value=False)
+        self.text_layer_z_var = tk.IntVar(value=0)
         self.text_layer_label_to_id = {}
         self.text_layer_selector = None
         self.text_layer_text = None
+        self.rendered_text_cache = {}
 
         # v1.1 public display-text editor state. These are global output labels
         # that used to be hard-coded inside draw_source_analyzer().
@@ -1222,18 +1492,48 @@ class PerspectiveConsoleApp:
         self.top_row_selector = None
         self.top_row_option_selector = None
 
+        # v1.2 QR Group editor state. The QR label remains a Display Text object,
+        # but its position is stored as a vector linked to this QR group.
+        qr_group = ensure_qr_group_storage(self.store.data)
+        self.qr_x_var = tk.IntVar(value=int(qr_group["x"]))
+        self.qr_y_var = tk.IntVar(value=int(qr_group["y"]))
+        self.qr_size_var = tk.IntVar(value=int(qr_group["size"]))
+        self.qr_foreground_var = tk.StringVar(value=str(qr_group["foreground"]))
+        self.qr_background_var = tk.StringVar(value=str(qr_group["background"]))
+        self.qr_label_offset_x_var = tk.IntVar(value=int(qr_group["label_offset_x"]))
+        self.qr_label_offset_y_var = tk.IntVar(value=int(qr_group["label_offset_y"]))
+        self.qr_z_var = tk.IntVar(value=int(qr_group["z"]))
+        self._syncing_qr_vars = False
+
+        # v1.3 Colors tab state. Selection is event-driven and persisted only as
+        # a lightweight scratch pointer; no polling loop runs while the tab waits.
+        theme_colors = ensure_theme_color_storage(self.store.data)
+        self.theme_color_vars = {role: tk.StringVar(value=color) for role, color in theme_colors.items()}
+        self.theme_role_selected_vars = {role: tk.BooleanVar(value=False) for role in BITNINJA_DARK_THEME}
+        scratch = self.store.data.setdefault("under_header", {}).setdefault("scratch", {})
+        self.selected_theme_role_var = tk.StringVar(value=str(scratch.get("color_selected_role", "")))
+        self.color_status_var = tk.StringVar(value=str(scratch.get("color_last_action", "No color selected")))
+        self.color_cancel_button = None
+        self.theme_swatch_labels = {}
+        self._syncing_theme_selection = False
+
+        # v1.2 mutually-exclusive per-card Deck button border classifications.
+        self.deck_border_vars = {key: tk.BooleanVar(value=False) for key in DECK_BORDER_STYLES}
+        self._syncing_deck_border_vars = False
         self.card_buttons = {}
+        self.card_button_frames = {}
         self.deck_button_frame = None
         self.deck_storage_listbox = None
         self.deck_storage_ids = []
         self.pending_deck_swap = None
-        self.max_deck_buttons = 6
+        self.max_deck_buttons = MAX_DECK_BUTTONS
         self.hotkeys_enabled_var = tk.BooleanVar(value=True)
         self.sticker_selector = None
         self.autosave_after_id = None
         self.qr_photo = None
-        self.qr_cache_link = None
+        self.qr_cache_key = None
         self.build_controller()
+        self.restore_theme_selection()
         self.load_active_card_into_editor()
         self.redraw_output()
         self.recover_output_window_on_launch()
@@ -1274,7 +1574,7 @@ class PerspectiveConsoleApp:
 
     def bind_controller_hotkeys(self) -> None:
         # Deck/card selection.
-        for n in range(1, 7):
+        for n in range(1, self.max_deck_buttons + 1):
             self.root.bind_all(f"<Control-Key-{n}>", lambda _event, idx=n-1: self.run_hotkey(lambda: self.select_deck_hotkey(idx)))
 
         self.root.bind_all("<Control-b>", lambda _event: self.run_hotkey(lambda: self.select_card("blank-hide")))
@@ -1364,13 +1664,33 @@ class PerspectiveConsoleApp:
         self.verdict_combo.grid(row=3, column=1, sticky="ew", pady=2)
         ttk.Label(right, text="Source Link (for QR)").grid(row=4, column=0, sticky="w", pady=(6, 2))
         ttk.Entry(right, textvariable=self.source_link_var).grid(row=4, column=1, sticky="ew", pady=(6, 2))
-        ttk.Label(right, text="Current Claim").grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 2))
+        claim_header = ttk.Frame(right)
+        claim_header.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(12, 2))
+        claim_header.columnconfigure(0, weight=1)
+        ttk.Label(claim_header, text="Boxed Content #1").grid(row=0, column=0, sticky="w")
+        ttk.Label(claim_header, text=f"Wrap px (max {BOX_WRAP_MAXES['claim']})").grid(row=0, column=1, sticky="e", padx=(12, 4))
+        ttk.Spinbox(claim_header, from_=BOX_WRAP_MIN, to=BOX_WRAP_MAXES["claim"], textvariable=self.claim_wrap_var, width=7, command=self.apply_editor_to_card).grid(row=0, column=2, sticky="e")
+        ttk.Button(claim_header, text="MAX", width=5, command=lambda: self.set_box_wrap_to_max("claim", self.claim_wrap_var)).grid(row=0, column=3, sticky="e", padx=(4, 0))
         self.claim_text = tk.Text(right, height=4, wrap="word", undo=True)
         self.claim_text.grid(row=8, column=0, columnspan=2, sticky="nsew")
-        ttk.Label(right, text="Evidence Shown").grid(row=9, column=0, columnspan=2, sticky="w", pady=(12, 2))
+
+        evidence_header = ttk.Frame(right)
+        evidence_header.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(12, 2))
+        evidence_header.columnconfigure(0, weight=1)
+        ttk.Label(evidence_header, text="Boxed Content #2").grid(row=0, column=0, sticky="w")
+        ttk.Label(evidence_header, text=f"Wrap px (max {BOX_WRAP_MAXES['evidence']})").grid(row=0, column=1, sticky="e", padx=(12, 4))
+        ttk.Spinbox(evidence_header, from_=BOX_WRAP_MIN, to=BOX_WRAP_MAXES["evidence"], textvariable=self.evidence_wrap_var, width=7, command=self.apply_editor_to_card).grid(row=0, column=2, sticky="e")
+        ttk.Button(evidence_header, text="MAX", width=5, command=lambda: self.set_box_wrap_to_max("evidence", self.evidence_wrap_var)).grid(row=0, column=3, sticky="e", padx=(4, 0))
         self.evidence_text = tk.Text(right, height=4, wrap="word", undo=True)
         self.evidence_text.grid(row=10, column=0, columnspan=2, sticky="nsew")
-        ttk.Label(right, text="Open Question").grid(row=11, column=0, columnspan=2, sticky="w", pady=(12, 2))
+
+        question_header = ttk.Frame(right)
+        question_header.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(12, 2))
+        question_header.columnconfigure(0, weight=1)
+        ttk.Label(question_header, text="Boxed Content #3").grid(row=0, column=0, sticky="w")
+        ttk.Label(question_header, text=f"Wrap px (max {BOX_WRAP_MAXES['openQuestion']})").grid(row=0, column=1, sticky="e", padx=(12, 4))
+        ttk.Spinbox(question_header, from_=BOX_WRAP_MIN, to=BOX_WRAP_MAXES["openQuestion"], textvariable=self.question_wrap_var, width=7, command=self.apply_editor_to_card).grid(row=0, column=2, sticky="e")
+        ttk.Button(question_header, text="MAX", width=5, command=lambda: self.set_box_wrap_to_max("openQuestion", self.question_wrap_var)).grid(row=0, column=3, sticky="e", padx=(4, 0))
         self.open_question_text = tk.Text(right, height=4, wrap="word", undo=True)
         self.open_question_text.grid(row=12, column=0, columnspan=2, sticky="nsew")
         layer_notebook = ttk.Notebook(right)
@@ -1384,6 +1704,8 @@ class PerspectiveConsoleApp:
         hotkeys_frame = ttk.Frame(layer_notebook, padding=8)
         display_edit_frame = ttk.Frame(layer_notebook, padding=8)
         top_rows_frame = ttk.Frame(layer_notebook, padding=8)
+        qr_group_frame = ttk.Frame(layer_notebook, padding=8)
+        colors_frame = ttk.Frame(layer_notebook, padding=8)
         layer_notebook.add(deck_frame, text="Deck Cards")
         layer_notebook.add(sticker_frame, text="Emoji Stickers")
         layer_notebook.add(image_frame, text="PNG Images")
@@ -1392,6 +1714,9 @@ class PerspectiveConsoleApp:
         layer_notebook.add(hotkeys_frame, text="Hotkeys")
         layer_notebook.add(display_edit_frame, text="Display Edit")
         layer_notebook.add(top_rows_frame, text="Top Rows")
+        layer_notebook.add(qr_group_frame, text="QR Group")
+        layer_notebook.add(colors_frame, text="Colors")
+        self.build_colors_tab(colors_frame)
 
         deck_frame.columnconfigure(0, weight=0, minsize=452)
         deck_frame.columnconfigure(1, weight=1)
@@ -1424,8 +1749,19 @@ class PerspectiveConsoleApp:
         ttk.Button(deck_export_buttons, text="Export Card PNG", command=self.export_current_card_png).pack(side="left")
         ttk.Button(deck_export_buttons, text="Export All PNGs", command=self.export_all_cards_png).pack(side="left", padx=6)
 
-        deck_note = ttk.Label(deck_left, text="Deck buttons on the sidebar show the first 6 cards. Extra cards stay in storage.", wraplength=430)
-        deck_note.grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        deck_border_box = ttk.LabelFrame(deck_left, text="Deck Button Information Border", padding=6)
+        deck_border_box.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        for idx, key in enumerate(DECK_BORDER_STYLES):
+            ttk.Checkbutton(
+                deck_border_box,
+                text=key,
+                variable=self.deck_border_vars[key],
+                command=lambda selected=key: self.on_deck_border_checkbox(selected),
+            ).grid(row=idx // 4, column=idx % 4, sticky="w", padx=(0, 10), pady=2)
+        ttk.Button(deck_border_box, text="Clear Border", command=self.clear_deck_border).grid(row=2, column=0, columnspan=4, sticky="w", pady=(5, 0))
+
+        deck_note = ttk.Label(deck_left, text="Deck buttons on the sidebar show the first 8 cards. Extra cards stay in storage. Border choices are mutually exclusive per card.", wraplength=430)
+        deck_note.grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
         ttk.Label(deck_right, text="Deck Card Storage", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, sticky="w")
         deck_storage_frame = ttk.Frame(deck_right)
@@ -1597,6 +1933,71 @@ class PerspectiveConsoleApp:
         )
         top_note.grid(row=7, column=0, columnspan=8, sticky="w", pady=(10, 0))
 
+        qr_group_frame.columnconfigure(1, weight=1)
+        ttk.Label(qr_group_frame, text="QR X").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Spinbox(qr_group_frame, from_=0, to=960, textvariable=self.qr_x_var, width=8, command=self.apply_qr_group).grid(row=0, column=1, sticky="w", pady=2)
+        ttk.Label(qr_group_frame, text="QR Y").grid(row=0, column=2, sticky="e", padx=(12, 6), pady=2)
+        ttk.Spinbox(qr_group_frame, from_=0, to=500, textvariable=self.qr_y_var, width=8, command=self.apply_qr_group).grid(row=0, column=3, sticky="w", pady=2)
+        ttk.Label(qr_group_frame, text="QR size").grid(row=0, column=4, sticky="e", padx=(12, 6), pady=2)
+        ttk.Spinbox(qr_group_frame, from_=48, to=260, textvariable=self.qr_size_var, width=8, command=self.apply_qr_group).grid(row=0, column=5, sticky="w", pady=2)
+        ttk.Label(qr_group_frame, text="Z").grid(row=0, column=6, sticky="e", padx=(12, 6), pady=2)
+        ttk.Spinbox(qr_group_frame, from_=-1000, to=1000, textvariable=self.qr_z_var, width=8, command=self.apply_qr_group).grid(row=0, column=7, sticky="w", pady=2)
+
+        ttk.Label(qr_group_frame, text="Foreground RGB").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Entry(qr_group_frame, textvariable=self.qr_foreground_var, width=12).grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Button(qr_group_frame, text="Pick Foreground", command=lambda: self.choose_qr_color("foreground")).grid(row=1, column=2, columnspan=2, sticky="w", padx=(8, 0), pady=2)
+        ttk.Label(qr_group_frame, text="Background RGB").grid(row=1, column=4, sticky="e", padx=(12, 6), pady=2)
+        ttk.Entry(qr_group_frame, textvariable=self.qr_background_var, width=12).grid(row=1, column=5, sticky="w", pady=2)
+        ttk.Button(qr_group_frame, text="Pick Background", command=lambda: self.choose_qr_color("background")).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0), pady=2)
+
+        ttk.Label(qr_group_frame, text="Label vector X").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Spinbox(qr_group_frame, from_=-960, to=960, textvariable=self.qr_label_offset_x_var, width=8, command=self.apply_qr_group).grid(row=2, column=1, sticky="w", pady=2)
+        ttk.Label(qr_group_frame, text="Label vector Y").grid(row=2, column=2, sticky="e", padx=(12, 6), pady=2)
+        ttk.Spinbox(qr_group_frame, from_=-500, to=500, textvariable=self.qr_label_offset_y_var, width=8, command=self.apply_qr_group).grid(row=2, column=3, sticky="w", pady=2)
+        ttk.Button(qr_group_frame, text="Apply QR Group", command=self.apply_qr_group).grid(row=2, column=4, columnspan=2, sticky="w", padx=(12, 0), pady=2)
+        ttk.Button(qr_group_frame, text="Reset QR Defaults", command=self.reset_qr_group_defaults).grid(row=2, column=6, columnspan=2, sticky="w", padx=(8, 0), pady=2)
+
+        qr_nudge_row = ttk.Frame(qr_group_frame)
+        qr_nudge_row.grid(row=3, column=0, columnspan=8, sticky="ew", pady=(7, 0))
+        ttk.Label(qr_nudge_row, text="QR single move (1 px)").pack(side="left", padx=(0, 4))
+        ttk.Button(qr_nudge_row, text="←", width=3, command=lambda: self.nudge_qr_group(-1, 0)).pack(side="left")
+        ttk.Button(qr_nudge_row, text="↑", width=3, command=lambda: self.nudge_qr_group(0, -1)).pack(side="left")
+        ttk.Button(qr_nudge_row, text="↓", width=3, command=lambda: self.nudge_qr_group(0, 1)).pack(side="left")
+        ttk.Button(qr_nudge_row, text="→", width=3, command=lambda: self.nudge_qr_group(1, 0)).pack(side="left")
+        ttk.Label(qr_nudge_row, text="QR nudge (10 px)").pack(side="left", padx=(12, 4))
+        ttk.Button(qr_nudge_row, text="←10", width=5, command=lambda: self.nudge_qr_group(-10, 0)).pack(side="left")
+        ttk.Button(qr_nudge_row, text="↑10", width=5, command=lambda: self.nudge_qr_group(0, -10)).pack(side="left")
+        ttk.Button(qr_nudge_row, text="↓10", width=5, command=lambda: self.nudge_qr_group(0, 10)).pack(side="left")
+        ttk.Button(qr_nudge_row, text="→10", width=5, command=lambda: self.nudge_qr_group(10, 0)).pack(side="left")
+
+        qr_label_nudge_row = ttk.Frame(qr_group_frame)
+        qr_label_nudge_row.grid(row=4, column=0, columnspan=8, sticky="ew", pady=(4, 0))
+        ttk.Label(qr_label_nudge_row, text="Label single move (1 px)").pack(side="left", padx=(0, 4))
+        ttk.Button(qr_label_nudge_row, text="←", width=3, command=lambda: self.nudge_qr_label(-1, 0)).pack(side="left")
+        ttk.Button(qr_label_nudge_row, text="↑", width=3, command=lambda: self.nudge_qr_label(0, -1)).pack(side="left")
+        ttk.Button(qr_label_nudge_row, text="↓", width=3, command=lambda: self.nudge_qr_label(0, 1)).pack(side="left")
+        ttk.Button(qr_label_nudge_row, text="→", width=3, command=lambda: self.nudge_qr_label(1, 0)).pack(side="left")
+        ttk.Label(qr_label_nudge_row, text="Label nudge (10 px)").pack(side="left", padx=(12, 4))
+        ttk.Button(qr_label_nudge_row, text="←10", width=5, command=lambda: self.nudge_qr_label(-10, 0)).pack(side="left")
+        ttk.Button(qr_label_nudge_row, text="↑10", width=5, command=lambda: self.nudge_qr_label(0, -10)).pack(side="left")
+        ttk.Button(qr_label_nudge_row, text="↓10", width=5, command=lambda: self.nudge_qr_label(0, 10)).pack(side="left")
+        ttk.Button(qr_label_nudge_row, text="→10", width=5, command=lambda: self.nudge_qr_label(10, 0)).pack(side="left")
+
+        qr_z_row = ttk.Frame(qr_group_frame)
+        qr_z_row.grid(row=5, column=0, columnspan=8, sticky="ew", pady=(4, 0))
+        ttk.Label(qr_z_row, text="Z-axis fine tuning").pack(side="left", padx=(0, 4))
+        ttk.Button(qr_z_row, text="Z Down", command=lambda: self.nudge_qr_z(-1)).pack(side="left")
+        ttk.Button(qr_z_row, text="Z Up", command=lambda: self.nudge_qr_z(1)).pack(side="left", padx=4)
+        ttk.Button(qr_z_row, text="Bring to Front", command=self.bring_qr_to_front).pack(side="left", padx=(14, 4))
+        ttk.Button(qr_z_row, text="Pull to Back", command=self.pull_qr_to_back).pack(side="left", padx=4)
+
+        qr_note = ttk.Label(
+            qr_group_frame,
+            text="The QR label uses a saved vector from the QR square. Moving the QR section keeps the label attached; moving QR Label in Display Edit updates the same vector. Pull to Back restores the original z-axis position below sticker/image/text layers.",
+            wraplength=790,
+        )
+        qr_note.grid(row=6, column=0, columnspan=8, sticky="w", pady=(10, 0))
+
         sticker_frame.columnconfigure(0, weight=0)
         sticker_frame.columnconfigure(1, weight=1)
 
@@ -1697,59 +2098,73 @@ class PerspectiveConsoleApp:
 
         image_frame.columnconfigure(1, weight=1)
         ttk.Label(image_frame, text="Image Layer").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
-        self.image_selector = ttk.Combobox(
-            image_frame,
-            state="readonly",
-            textvariable=self.selected_image_label_var,
-            values=[],
-            width=38,
-        )
-        self.image_selector.grid(row=0, column=1, columnspan=3, sticky="ew", pady=2)
+        self.image_selector = ttk.Combobox(image_frame, state="readonly", textvariable=self.selected_image_label_var, values=[], width=38)
+        self.image_selector.grid(row=0, column=1, columnspan=5, sticky="ew", pady=2)
         self.image_selector.bind("<<ComboboxSelected>>", self.on_image_layer_selected)
 
         ttk.Label(image_frame, text="Name").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=2)
         ttk.Entry(image_frame, textvariable=self.image_name_var, width=22).grid(row=1, column=1, sticky="w", pady=2)
-
         ttk.Label(image_frame, text="X").grid(row=1, column=2, sticky="e", padx=(12, 4), pady=2)
         ttk.Spinbox(image_frame, from_=0, to=960, textvariable=self.image_x_var, width=7, command=self.apply_image_editor).grid(row=1, column=3, sticky="w", pady=2)
+        ttk.Label(image_frame, text="Y").grid(row=1, column=4, sticky="e", padx=(12, 4), pady=2)
+        ttk.Spinbox(image_frame, from_=0, to=500, textvariable=self.image_y_var, width=7, command=self.apply_image_editor).grid(row=1, column=5, sticky="w", pady=2)
 
-        ttk.Label(image_frame, text="Y").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
-        ttk.Spinbox(image_frame, from_=0, to=500, textvariable=self.image_y_var, width=7, command=self.apply_image_editor).grid(row=2, column=1, sticky="w", pady=2)
+        ttk.Label(image_frame, text="Scale %").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Spinbox(image_frame, from_=10, to=400, textvariable=self.image_scale_var, width=7, command=self.apply_image_editor).grid(row=2, column=1, sticky="w", pady=2)
+        ttk.Label(image_frame, text="Opacity").grid(row=2, column=2, sticky="e", padx=(12, 4), pady=2)
+        ttk.Spinbox(image_frame, from_=0.1, to=1.0, increment=0.1, textvariable=self.image_opacity_var, width=7, command=self.apply_image_editor).grid(row=2, column=3, sticky="w", pady=2)
+        ttk.Label(image_frame, text="Rotation °").grid(row=2, column=4, sticky="e", padx=(12, 4), pady=2)
+        ttk.Spinbox(image_frame, from_=-359, to=359, textvariable=self.image_rotation_var, width=7, command=self.apply_image_editor).grid(row=2, column=5, sticky="w", pady=2)
 
-        ttk.Label(image_frame, text="Scale %").grid(row=2, column=2, sticky="e", padx=(12, 4), pady=2)
-        ttk.Spinbox(image_frame, from_=10, to=400, textvariable=self.image_scale_var, width=7, command=self.apply_image_editor).grid(row=2, column=3, sticky="w", pady=2)
+        transform_row = ttk.Frame(image_frame)
+        transform_row.grid(row=3, column=0, columnspan=6, sticky="ew", pady=2)
+        ttk.Checkbutton(transform_row, text="X Flip", variable=self.image_flip_x_var, command=self.apply_image_editor).pack(side="left")
+        ttk.Checkbutton(transform_row, text="Y Flip", variable=self.image_flip_y_var, command=self.apply_image_editor).pack(side="left", padx=(8, 0))
+        ttk.Label(transform_row, text="Z").pack(side="left", padx=(18, 4))
+        ttk.Spinbox(transform_row, from_=-1000, to=1000, textvariable=self.image_z_var, width=7, command=self.apply_image_editor).pack(side="left")
+        ttk.Label(transform_row, text="Source:").pack(side="left", padx=(18, 4))
+        ttk.Label(transform_row, textvariable=self.image_path_var).pack(side="left")
 
-        ttk.Label(image_frame, text="Opacity").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=2)
-        ttk.Spinbox(image_frame, from_=0.1, to=1.0, increment=0.1, textvariable=self.image_opacity_var, width=7, command=self.apply_image_editor).grid(row=3, column=1, sticky="w", pady=2)
-
-        ttk.Label(image_frame, text="Source").grid(row=3, column=2, sticky="e", padx=(12, 4), pady=2)
-        ttk.Label(image_frame, textvariable=self.image_path_var).grid(row=3, column=3, sticky="w", pady=2)
+        library_row = ttk.Frame(image_frame)
+        library_row.grid(row=4, column=0, columnspan=6, sticky="ew", pady=(4, 0))
+        ttk.Label(library_row, text="Imported image library").pack(side="left", padx=(0, 6))
+        self.imported_image_selector = ttk.Combobox(library_row, state="readonly", textvariable=self.imported_image_library_var, values=[], width=34)
+        self.imported_image_selector.pack(side="left", fill="x", expand=True)
+        ttk.Button(library_row, text="Reuse Selected", command=self.reuse_imported_png_layer).pack(side="left", padx=4)
+        ttk.Button(library_row, text="Refresh", command=self.refresh_imported_image_library).pack(side="left")
 
         image_buttons = ttk.Frame(image_frame)
-        image_buttons.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(6, 0))
-        ttk.Button(image_buttons, text="Import PNG", command=self.import_png_layer).pack(side="left")
+        image_buttons.grid(row=5, column=0, columnspan=6, sticky="ew", pady=(6, 0))
+        ttk.Button(image_buttons, text="Import New PNG", command=self.import_png_layer).pack(side="left")
         ttk.Button(image_buttons, text="Duplicate", command=self.duplicate_image_layer).pack(side="left", padx=4)
         ttk.Button(image_buttons, text="Apply Image", command=self.apply_image_editor).pack(side="left", padx=4)
-        ttk.Button(image_buttons, text="Layer Up", command=self.layer_image_up).pack(side="left", padx=4)
-        ttk.Button(image_buttons, text="Layer Down", command=self.layer_image_down).pack(side="left", padx=4)
         ttk.Button(image_buttons, text="Delete", command=self.delete_image_layer).pack(side="left", padx=4)
         ttk.Button(image_buttons, text="Show", command=self.show_image_layer).pack(side="left", padx=4)
         ttk.Button(image_buttons, text="Hide", command=self.hide_image_layer).pack(side="left", padx=4)
 
         image_nudge_buttons = ttk.Frame(image_frame)
-        image_nudge_buttons.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(4, 0))
-        ttk.Label(image_nudge_buttons, text="Nudge").pack(side="left", padx=(0, 4))
+        image_nudge_buttons.grid(row=6, column=0, columnspan=6, sticky="ew", pady=(4, 0))
+        ttk.Label(image_nudge_buttons, text="Move 1 px").pack(side="left", padx=(0, 4))
         ttk.Button(image_nudge_buttons, text="←", width=3, command=lambda: self.nudge_image_layer(-1, 0)).pack(side="left")
         ttk.Button(image_nudge_buttons, text="↑", width=3, command=lambda: self.nudge_image_layer(0, -1)).pack(side="left")
         ttk.Button(image_nudge_buttons, text="↓", width=3, command=lambda: self.nudge_image_layer(0, 1)).pack(side="left")
         ttk.Button(image_nudge_buttons, text="→", width=3, command=lambda: self.nudge_image_layer(1, 0)).pack(side="left")
-        ttk.Button(image_nudge_buttons, text="←10", width=5, command=lambda: self.nudge_image_layer(-10, 0)).pack(side="left", padx=(8, 0))
+        ttk.Label(image_nudge_buttons, text="Nudge 10 px").pack(side="left", padx=(10, 4))
+        ttk.Button(image_nudge_buttons, text="←10", width=5, command=lambda: self.nudge_image_layer(-10, 0)).pack(side="left")
         ttk.Button(image_nudge_buttons, text="↑10", width=5, command=lambda: self.nudge_image_layer(0, -10)).pack(side="left")
         ttk.Button(image_nudge_buttons, text="↓10", width=5, command=lambda: self.nudge_image_layer(0, 10)).pack(side="left")
         ttk.Button(image_nudge_buttons, text="→10", width=5, command=lambda: self.nudge_image_layer(10, 0)).pack(side="left")
 
+        image_z_buttons = ttk.Frame(image_frame)
+        image_z_buttons.grid(row=7, column=0, columnspan=6, sticky="ew", pady=(4, 0))
+        ttk.Label(image_z_buttons, text="Z-axis fine tuning").pack(side="left", padx=(0, 4))
+        ttk.Button(image_z_buttons, text="Z Down", command=lambda: self.nudge_image_z(-1)).pack(side="left")
+        ttk.Button(image_z_buttons, text="Z Up", command=lambda: self.nudge_image_z(1)).pack(side="left", padx=4)
+        ttk.Button(image_z_buttons, text="Bring to Front", command=self.bring_image_to_front).pack(side="left", padx=(12, 4))
+        ttk.Button(image_z_buttons, text="Pull to Back", command=self.pull_image_to_back).pack(side="left", padx=4)
+
         image_snap_buttons = ttk.Frame(image_frame)
-        image_snap_buttons.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        image_snap_buttons.grid(row=8, column=0, columnspan=6, sticky="ew", pady=(4, 0))
         ttk.Label(image_snap_buttons, text="Snap").pack(side="left", padx=(0, 4))
         ttk.Button(image_snap_buttons, text="L", width=4, command=lambda: self.snap_image_layer("left")).pack(side="left")
         ttk.Button(image_snap_buttons, text="CX", width=4, command=lambda: self.snap_image_layer("center_x")).pack(side="left")
@@ -1757,39 +2172,38 @@ class PerspectiveConsoleApp:
         ttk.Button(image_snap_buttons, text="T", width=4, command=lambda: self.snap_image_layer("top")).pack(side="left", padx=(8, 0))
         ttk.Button(image_snap_buttons, text="CY", width=4, command=lambda: self.snap_image_layer("center_y")).pack(side="left")
         ttk.Button(image_snap_buttons, text="B", width=4, command=lambda: self.snap_image_layer("bottom")).pack(side="left")
+        self.refresh_imported_image_library()
 
         text_layer_frame.columnconfigure(1, weight=1)
         ttk.Label(text_layer_frame, text="Text Layer").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
-        self.text_layer_selector = ttk.Combobox(
-            text_layer_frame,
-            state="readonly",
-            textvariable=self.selected_text_layer_label_var,
-            values=[],
-            width=38,
-        )
+        self.text_layer_selector = ttk.Combobox(text_layer_frame, state="readonly", textvariable=self.selected_text_layer_label_var, values=[], width=38)
         self.text_layer_selector.grid(row=0, column=1, columnspan=5, sticky="ew", pady=2)
         self.text_layer_selector.bind("<<ComboboxSelected>>", self.on_text_layer_selected)
 
         ttk.Label(text_layer_frame, text="Name").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=2)
         ttk.Entry(text_layer_frame, textvariable=self.text_layer_name_var, width=22).grid(row=1, column=1, sticky="w", pady=2)
-
         ttk.Label(text_layer_frame, text="X").grid(row=1, column=2, sticky="e", padx=(12, 4), pady=2)
         ttk.Spinbox(text_layer_frame, from_=0, to=960, textvariable=self.text_layer_x_var, width=7, command=self.apply_text_layer_editor).grid(row=1, column=3, sticky="w", pady=2)
-
         ttk.Label(text_layer_frame, text="Y").grid(row=1, column=4, sticky="e", padx=(12, 4), pady=2)
         ttk.Spinbox(text_layer_frame, from_=0, to=500, textvariable=self.text_layer_y_var, width=7, command=self.apply_text_layer_editor).grid(row=1, column=5, sticky="w", pady=2)
 
         ttk.Label(text_layer_frame, text="Size").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
         ttk.Spinbox(text_layer_frame, from_=8, to=72, textvariable=self.text_layer_size_var, width=7, command=self.apply_text_layer_editor).grid(row=2, column=1, sticky="w", pady=2)
-
         ttk.Label(text_layer_frame, text="Opacity").grid(row=2, column=2, sticky="e", padx=(12, 4), pady=2)
         ttk.Spinbox(text_layer_frame, from_=0.1, to=1.0, increment=0.1, textvariable=self.text_layer_opacity_var, width=7, command=self.apply_text_layer_editor).grid(row=2, column=3, sticky="w", pady=2)
-
         ttk.Label(text_layer_frame, text="Color").grid(row=2, column=4, sticky="e", padx=(12, 4), pady=2)
         ttk.Entry(text_layer_frame, textvariable=self.text_layer_color_var, width=10).grid(row=2, column=5, sticky="w", pady=2)
 
         ttk.Label(text_layer_frame, text="Wrap px").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=2)
         ttk.Spinbox(text_layer_frame, from_=80, to=900, textvariable=self.text_layer_wrap_var, width=8, command=self.apply_text_layer_editor).grid(row=3, column=1, sticky="w", pady=2)
+        ttk.Label(text_layer_frame, text="Rotation °").grid(row=3, column=2, sticky="e", padx=(12, 4), pady=2)
+        ttk.Spinbox(text_layer_frame, from_=-359, to=359, textvariable=self.text_layer_rotation_var, width=7, command=self.apply_text_layer_editor).grid(row=3, column=3, sticky="w", pady=2)
+        text_transform = ttk.Frame(text_layer_frame)
+        text_transform.grid(row=3, column=4, columnspan=2, sticky="w", padx=(12, 0))
+        ttk.Checkbutton(text_transform, text="X Flip", variable=self.text_layer_flip_x_var, command=self.apply_text_layer_editor).pack(side="left")
+        ttk.Checkbutton(text_transform, text="Y Flip", variable=self.text_layer_flip_y_var, command=self.apply_text_layer_editor).pack(side="left", padx=(6, 0))
+        ttk.Label(text_transform, text="Z").pack(side="left", padx=(10, 3))
+        ttk.Spinbox(text_transform, from_=-1000, to=1000, textvariable=self.text_layer_z_var, width=6, command=self.apply_text_layer_editor).pack(side="left")
 
         ttk.Label(text_layer_frame, text="Text").grid(row=4, column=0, sticky="nw", padx=(0, 6), pady=2)
         self.text_layer_text = tk.Text(text_layer_frame, height=4, width=58, wrap="word")
@@ -1800,26 +2214,33 @@ class PerspectiveConsoleApp:
         ttk.Button(text_layer_buttons, text="Add Text", command=self.add_text_layer).pack(side="left")
         ttk.Button(text_layer_buttons, text="Duplicate", command=self.duplicate_text_layer).pack(side="left", padx=4)
         ttk.Button(text_layer_buttons, text="Apply Text", command=self.apply_text_layer_editor).pack(side="left", padx=4)
-        ttk.Button(text_layer_buttons, text="Layer Up", command=self.layer_text_up).pack(side="left", padx=4)
-        ttk.Button(text_layer_buttons, text="Layer Down", command=self.layer_text_down).pack(side="left", padx=4)
         ttk.Button(text_layer_buttons, text="Delete", command=self.delete_text_layer).pack(side="left", padx=4)
         ttk.Button(text_layer_buttons, text="Show", command=self.show_text_layer).pack(side="left", padx=4)
         ttk.Button(text_layer_buttons, text="Hide", command=self.hide_text_layer).pack(side="left", padx=4)
 
         text_nudge_buttons = ttk.Frame(text_layer_frame)
         text_nudge_buttons.grid(row=6, column=0, columnspan=6, sticky="ew", pady=(4, 0))
-        ttk.Label(text_nudge_buttons, text="Nudge").pack(side="left", padx=(0, 4))
+        ttk.Label(text_nudge_buttons, text="Move 1 px").pack(side="left", padx=(0, 4))
         ttk.Button(text_nudge_buttons, text="←", width=3, command=lambda: self.nudge_text_layer(-1, 0)).pack(side="left")
         ttk.Button(text_nudge_buttons, text="↑", width=3, command=lambda: self.nudge_text_layer(0, -1)).pack(side="left")
         ttk.Button(text_nudge_buttons, text="↓", width=3, command=lambda: self.nudge_text_layer(0, 1)).pack(side="left")
         ttk.Button(text_nudge_buttons, text="→", width=3, command=lambda: self.nudge_text_layer(1, 0)).pack(side="left")
-        ttk.Button(text_nudge_buttons, text="←10", width=5, command=lambda: self.nudge_text_layer(-10, 0)).pack(side="left", padx=(8, 0))
+        ttk.Label(text_nudge_buttons, text="Nudge 10 px").pack(side="left", padx=(10, 4))
+        ttk.Button(text_nudge_buttons, text="←10", width=5, command=lambda: self.nudge_text_layer(-10, 0)).pack(side="left")
         ttk.Button(text_nudge_buttons, text="↑10", width=5, command=lambda: self.nudge_text_layer(0, -10)).pack(side="left")
         ttk.Button(text_nudge_buttons, text="↓10", width=5, command=lambda: self.nudge_text_layer(0, 10)).pack(side="left")
         ttk.Button(text_nudge_buttons, text="→10", width=5, command=lambda: self.nudge_text_layer(10, 0)).pack(side="left")
 
+        text_z_buttons = ttk.Frame(text_layer_frame)
+        text_z_buttons.grid(row=7, column=0, columnspan=6, sticky="ew", pady=(4, 0))
+        ttk.Label(text_z_buttons, text="Z-axis fine tuning").pack(side="left", padx=(0, 4))
+        ttk.Button(text_z_buttons, text="Z Down", command=lambda: self.nudge_text_z(-1)).pack(side="left")
+        ttk.Button(text_z_buttons, text="Z Up", command=lambda: self.nudge_text_z(1)).pack(side="left", padx=4)
+        ttk.Button(text_z_buttons, text="Bring to Front", command=self.bring_text_to_front).pack(side="left", padx=(12, 4))
+        ttk.Button(text_z_buttons, text="Pull to Back", command=self.pull_text_to_back).pack(side="left", padx=4)
+
         text_snap_buttons = ttk.Frame(text_layer_frame)
-        text_snap_buttons.grid(row=7, column=0, columnspan=6, sticky="ew", pady=(4, 0))
+        text_snap_buttons.grid(row=8, column=0, columnspan=6, sticky="ew", pady=(4, 0))
         ttk.Label(text_snap_buttons, text="Snap").pack(side="left", padx=(0, 4))
         ttk.Button(text_snap_buttons, text="L", width=4, command=lambda: self.snap_text_layer("left")).pack(side="left")
         ttk.Button(text_snap_buttons, text="CX", width=4, command=lambda: self.snap_text_layer("center_x")).pack(side="left")
@@ -1870,7 +2291,7 @@ class PerspectiveConsoleApp:
 
         hotkey_text = (
             "Deck/Card\n"
-            "  Ctrl+1 ... Ctrl+6    Select sidebar deck card 1-6\n"
+            "  Ctrl+1 ... Ctrl+8    Select sidebar deck card 1-8\n"
             "  Ctrl+B               Blank / Hide\n"
             "  Ctrl+D               Duplicate active card\n"
             "  Ctrl+Shift+D         Delete active card\n"
@@ -1901,7 +2322,7 @@ class PerspectiveConsoleApp:
         controls.grid(row=14, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         ttk.Button(controls, text="Apply to Output", command=self.apply_editor_to_card).pack(side="left")
         ttk.Button(controls, text="Save + Apply", command=self.save_now).pack(side="left", padx=6)
-        ttk.Label(controls, textvariable=self.status_var).pack(side="left", padx=10)
+        ttk.Label(controls, textvariable=self.status_var, width=25, anchor="w").pack(side="left", padx=10)
         tk.Button(controls, text="Wipe 2 Default", command=self.to_default_wipe, bg="#650000", fg="white", activebackground="#8b0000", activeforeground="white").pack(side="right", padx=(8, 0))
         ttk.Button(controls, text="Load .buttstore", command=self.load_buttstore).pack(side="right", padx=4)
         ttk.Button(controls, text="Save As .buttstore", command=self.save_as).pack(side="right", padx=4)
@@ -1917,16 +2338,16 @@ class PerspectiveConsoleApp:
             self.display_text_value_text.bind("<FocusOut>", self.on_display_text_focus_out)
             self.display_text_value_text.bind("<<Modified>>", self.on_display_text_modified)
 
-        for var in [self.source_type_var, self.confidence_var, self.verdict_var, self.source_link_var, self.scanner_color_var]:
+        for var in [self.source_type_var, self.confidence_var, self.verdict_var, self.source_link_var, self.scanner_color_var, self.claim_wrap_var, self.evidence_wrap_var, self.question_wrap_var]:
             var.trace_add("write", lambda *_: self.schedule_autosave_stage_only())
 
         for var in [self.sticker_text_var, self.sticker_name_var, self.sticker_x_var, self.sticker_y_var, self.sticker_size_var, self.sticker_opacity_var]:
             var.trace_add("write", lambda *_: self.schedule_sticker_stage_only())
 
-        for var in [self.image_name_var, self.image_x_var, self.image_y_var, self.image_scale_var, self.image_opacity_var]:
+        for var in [self.image_name_var, self.image_x_var, self.image_y_var, self.image_scale_var, self.image_opacity_var, self.image_rotation_var, self.image_flip_x_var, self.image_flip_y_var, self.image_z_var]:
             var.trace_add("write", lambda *_: self.schedule_image_stage_only())
 
-        for var in [self.text_layer_name_var, self.text_layer_x_var, self.text_layer_y_var, self.text_layer_size_var, self.text_layer_opacity_var, self.text_layer_color_var, self.text_layer_wrap_var]:
+        for var in [self.text_layer_name_var, self.text_layer_x_var, self.text_layer_y_var, self.text_layer_size_var, self.text_layer_opacity_var, self.text_layer_color_var, self.text_layer_wrap_var, self.text_layer_rotation_var, self.text_layer_flip_x_var, self.text_layer_flip_y_var, self.text_layer_z_var]:
             var.trace_add("write", lambda *_: self.schedule_text_layer_stage_only())
 
         for var in [self.display_text_x_var, self.display_text_y_var, self.display_text_color_var, self.display_text_border_enabled_var, self.display_text_border_color_var, self.display_text_font_size_var]:
@@ -1935,9 +2356,425 @@ class PerspectiveConsoleApp:
         for var in [self.top_row_option_text_var, self.top_row_font_size_var, self.top_row_text_color_var, self.top_row_bar_color_var, self.top_row_x_var, self.top_row_y_var, self.top_row_visible_var]:
             var.trace_add("write", lambda *_: self.schedule_top_row_stage_only())
 
+        for var in [self.qr_x_var, self.qr_y_var, self.qr_size_var, self.qr_foreground_var, self.qr_background_var, self.qr_label_offset_x_var, self.qr_label_offset_y_var, self.qr_z_var]:
+            var.trace_add("write", lambda *_: self.schedule_qr_group_stage_only())
+
         self.refresh_display_text_storage()
         self.refresh_top_row_editor()
+        self.load_qr_group_into_controls()
         self.refresh_top_dropdown_values()
+
+    def theme_colors(self) -> dict:
+        return ensure_theme_color_storage(self.store.data)
+
+    def theme_color(self, role: str) -> str:
+        defaults = default_theme_colors()
+        return normalize_hex_color(str(self.theme_colors().get(role, defaults.get(role, "#ffffff"))), defaults.get(role, "#ffffff"))
+
+    def build_colors_tab(self, frame: ttk.Frame) -> None:
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        canvas = tk.Canvas(frame, width=790, height=390, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        content = ttk.Frame(canvas, padding=(2, 0, 8, 6))
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def sync_scrollregion(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfigure(window_id, width=max(760, canvas.winfo_width()))
+        content.bind("<Configure>", sync_scrollregion)
+        canvas.bind("<Configure>", sync_scrollregion)
+
+        content.columnconfigure(0, weight=1)
+        ttk.Label(content, text="Bitninja Dark Theme Colors", font=("TkDefaultFont", 11, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            content,
+            text="Select one source color, edit its hex value if needed, then use the action buttons below to apply that color to a console role. The selection is held without a polling loop when you switch tabs.",
+            wraplength=750,
+        ).grid(row=1, column=0, sticky="w", pady=(2, 7))
+
+        palette = ttk.Frame(content)
+        palette.grid(row=2, column=0, sticky="ew")
+        palette.columnconfigure(0, weight=1)
+        palette.columnconfigure(1, weight=1)
+        roles = list(BITNINJA_DARK_THEME)
+        split = (len(roles) + 1) // 2
+        for idx, role in enumerate(roles):
+            column_group = 0 if idx < split else 1
+            local_row = idx if idx < split else idx - split
+            cell = ttk.Frame(palette)
+            cell.grid(row=local_row, column=column_group, sticky="ew", padx=(0, 10) if column_group == 0 else (10, 0), pady=1)
+            cell.columnconfigure(1, weight=1)
+            ttk.Checkbutton(cell, variable=self.theme_role_selected_vars[role], command=lambda r=role: self.on_theme_role_checkbox(r)).grid(row=0, column=0, sticky="w")
+            ttk.Label(cell, text=BITNINJA_DARK_THEME[role]["label"], width=21).grid(row=0, column=1, sticky="w")
+            entry = ttk.Entry(cell, textvariable=self.theme_color_vars[role], width=9)
+            entry.grid(row=0, column=2, sticky="e", padx=(4, 3))
+            entry.bind("<Return>", lambda _event, r=role: self.apply_theme_entry_role(r))
+            swatch = tk.Label(cell, width=2, relief="sunken", bg=self.theme_color_vars[role].get())
+            swatch.grid(row=0, column=3, sticky="e")
+            self.theme_swatch_labels[role] = swatch
+
+        center = ttk.LabelFrame(content, text="Color Selection / Last Action", padding=6)
+        center.grid(row=3, column=0, sticky="ew", pady=(8, 6))
+        center.columnconfigure(0, weight=1)
+        ttk.Label(center, textvariable=self.color_status_var, wraplength=470).grid(row=0, column=0, sticky="w")
+        ttk.Button(center, text="Apply Edited Color", command=self.apply_selected_theme_entry).grid(row=0, column=1, padx=(6, 3))
+        self.color_cancel_button = ttk.Button(center, text="Cancel", command=self.cancel_theme_selection, state="disabled")
+        self.color_cancel_button.grid(row=0, column=2, padx=(3, 0))
+
+        actions = ttk.LabelFrame(content, text="Apply selected color to console element", padding=6)
+        actions.grid(row=4, column=0, sticky="ew")
+        action_labels = {
+            "output_background": "Output BG", "main_panel_background": "Main Panel", "info_panel_background": "Top Rows Panel", "blank_background": "Blank BG",
+            "main_border": "Main Border", "standard_line": "Divider Line", "top_row_line": "Top Row Line",
+            "box_background": "Box BG", "box_border": "Box Border",
+            "standard_text": "Standard Text", "secondary_text": "Secondary Text", "muted_text": "Muted Text", "dim_text": "Dim Text", "box_text": "Box Text", "top_row_text": "Top Row Text",
+            "accent": "Accent / Scanner", "scan_trail": "Scan Trail", "qr_outline": "QR Outline",
+        }
+        groups = ["Canvas", "Lines", "Boxes", "Text", "Accent"]
+        grouped = {group: [] for group in groups}
+        for role, spec in BITNINJA_DARK_THEME.items():
+            grouped.setdefault(spec["group"], []).append(role)
+        row = 0
+        for group in groups:
+            ttk.Label(actions, text=group, width=8).grid(row=row, column=0, sticky="nw", pady=2)
+            button_box = ttk.Frame(actions)
+            button_box.grid(row=row, column=1, sticky="w", pady=2)
+            for idx, role in enumerate(grouped.get(group, [])):
+                ttk.Button(button_box, text=action_labels[role], command=lambda r=role: self.apply_selected_theme_color_to_role(r)).grid(row=idx // 4, column=idx % 4, sticky="ew", padx=(0, 3), pady=1)
+            row += 1
+
+        reset_row = ttk.Frame(content)
+        reset_row.grid(row=5, column=0, sticky="ew", pady=(7, 0))
+        ttk.Button(reset_row, text="Reset Full Theme: Bitninja Dark", command=self.reset_bitninja_dark_theme).pack(side="left")
+        ttk.Label(reset_row, text="Colors only; content and positions stay intact.").pack(side="left", padx=8)
+
+    def refresh_theme_swatch(self, role: str) -> None:
+        swatch = self.theme_swatch_labels.get(role)
+        if swatch is not None:
+            swatch.configure(bg=normalize_hex_color(self.theme_color_vars[role].get(), self.theme_color(role)))
+
+    def restore_theme_selection(self) -> None:
+        role = self.selected_theme_role_var.get()
+        self._syncing_theme_selection = True
+        try:
+            for key, var in self.theme_role_selected_vars.items():
+                var.set(key == role and key in BITNINJA_DARK_THEME)
+        finally:
+            self._syncing_theme_selection = False
+        if role in BITNINJA_DARK_THEME:
+            self.color_cancel_button.configure(state="normal")
+        else:
+            self.selected_theme_role_var.set("")
+            self.color_cancel_button.configure(state="disabled")
+        for key in BITNINJA_DARK_THEME:
+            self.refresh_theme_swatch(key)
+
+    def on_theme_role_checkbox(self, role: str) -> None:
+        if self._syncing_theme_selection:
+            return
+        selected = bool(self.theme_role_selected_vars[role].get())
+        self._syncing_theme_selection = True
+        try:
+            for key, var in self.theme_role_selected_vars.items():
+                var.set(selected and key == role)
+        finally:
+            self._syncing_theme_selection = False
+        if selected:
+            self.selected_theme_role_var.set(role)
+            text = f"Selected source color: {BITNINJA_DARK_THEME[role]['label']} {self.theme_color_vars[role].get()}"
+            self.color_cancel_button.configure(state="normal")
+        else:
+            self.selected_theme_role_var.set("")
+            text = "No color selected"
+            self.color_cancel_button.configure(state="disabled")
+        scratch = self.store.data["under_header"].setdefault("scratch", {})
+        scratch["color_selected_role"] = self.selected_theme_role_var.get()
+        scratch["color_last_action"] = text
+        self.color_status_var.set(text)
+
+    def cancel_theme_selection(self) -> None:
+        self._syncing_theme_selection = True
+        try:
+            for var in self.theme_role_selected_vars.values():
+                var.set(False)
+        finally:
+            self._syncing_theme_selection = False
+        self.selected_theme_role_var.set("")
+        self.color_status_var.set("Selection cancelled; theme colors were not changed")
+        self.color_cancel_button.configure(state="disabled")
+        scratch = self.store.data["under_header"].setdefault("scratch", {})
+        scratch["color_selected_role"] = ""
+        scratch["color_last_action"] = self.color_status_var.get()
+
+    def apply_theme_entry_role(self, role: str) -> None:
+        self._syncing_theme_selection = True
+        try:
+            for key, var in self.theme_role_selected_vars.items():
+                var.set(key == role)
+        finally:
+            self._syncing_theme_selection = False
+        self.selected_theme_role_var.set(role)
+        self.apply_selected_theme_entry()
+
+    def apply_selected_theme_entry(self) -> None:
+        role = self.selected_theme_role_var.get()
+        if role not in BITNINJA_DARK_THEME:
+            self.color_status_var.set("Select a color checkbox first, or use an element action button to open the picker")
+            return
+        self.apply_theme_role_color(role, self.theme_color_vars[role].get(), f"Edited {BITNINJA_DARK_THEME[role]['label']}")
+
+    def apply_selected_theme_color_to_role(self, target_role: str) -> None:
+        source_role = self.selected_theme_role_var.get()
+        if source_role in BITNINJA_DARK_THEME:
+            color = self.theme_color_vars[source_role].get()
+            self.apply_theme_role_color(target_role, color, f"Copied {BITNINJA_DARK_THEME[source_role]['label']} to {BITNINJA_DARK_THEME[target_role]['label']}")
+            return
+        self.prompt_theme_color_for_role(target_role)
+
+    def prompt_theme_color_for_role(self, target_role: str) -> None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"Apply color to {BITNINJA_DARK_THEME[target_role]['label']}")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        frame = ttk.Frame(dlg, padding=12)
+        frame.pack(fill="both", expand=True)
+        preset_var = tk.StringVar(value=next(iter(THEME_PRESET_COLORS)))
+        color_var = tk.StringVar(value=self.theme_color(target_role))
+        ttk.Label(frame, text="Preset color").grid(row=0, column=0, sticky="w", pady=2)
+        preset = ttk.Combobox(frame, state="readonly", values=list(THEME_PRESET_COLORS), textvariable=preset_var, width=24)
+        preset.grid(row=0, column=1, sticky="ew", pady=2)
+        ttk.Label(frame, text="Hex color").grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=color_var, width=14).grid(row=1, column=1, sticky="w", pady=2)
+
+        def preset_changed(_event=None):
+            color_var.set(THEME_PRESET_COLORS.get(preset_var.get(), color_var.get()))
+        preset.bind("<<ComboboxSelected>>", preset_changed)
+
+        def choose_custom():
+            _rgb, chosen = colorchooser.askcolor(color=color_var.get(), title="Choose console color")
+            if chosen:
+                color_var.set(chosen.lower())
+
+        def accept():
+            self.apply_theme_role_color(target_role, color_var.get(), f"Applied picker color to {BITNINJA_DARK_THEME[target_role]['label']}")
+            dlg.destroy()
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(9, 0))
+        ttk.Button(buttons, text="Choose Custom", command=choose_custom).pack(side="left")
+        ttk.Button(buttons, text="Accept", command=accept).pack(side="left", padx=(10, 4))
+        ttk.Button(buttons, text="Cancel", command=dlg.destroy).pack(side="left", padx=4)
+
+    def apply_theme_role_color(self, role: str, color: str, message: str = "Theme color applied") -> None:
+        if role not in BITNINJA_DARK_THEME:
+            return
+        color = normalize_hex_color(color, BITNINJA_DARK_THEME[role]["color"])
+        colors = self.theme_colors()
+        colors[role] = color
+        self.theme_color_vars[role].set(color)
+        self.refresh_theme_swatch(role)
+        self.apply_theme_role_mappings(role, color)
+        self.store.mark_dirty("theme-color-updated")
+        self.redraw_output()
+        self.color_status_var.set(f"{message}: {color}")
+        scratch = self.store.data["under_header"].setdefault("scratch", {})
+        scratch["color_last_action"] = self.color_status_var.get()
+        self.schedule_autosave()
+
+    def apply_theme_role_mappings(self, role: str, color: str) -> None:
+        if role == "output_background":
+            self.store.data["header"]["output"]["background"] = color
+        elif role == "top_row_line":
+            for row in self.top_rows():
+                row["line_color"] = color
+        elif role == "standard_text":
+            obj = self.display_text_object_by_id("title_main")
+            if obj:
+                obj["color"] = color
+        elif role == "top_row_text":
+            for row in self.top_rows():
+                for option in row.get("options", []):
+                    option["color"] = color
+        elif role == "secondary_text":
+            for object_id in ["row_source_type", "row_confidence", "row_verdict", "qr_label", "host_label", "box_claim_label", "box_evidence_label", "box_question_label"]:
+                obj = self.display_text_object_by_id(object_id)
+                if obj:
+                    obj["color"] = color
+        elif role == "muted_text":
+            obj = self.display_text_object_by_id("right_brand")
+            if obj:
+                obj["color"] = color
+        elif role == "dim_text":
+            obj = self.display_text_object_by_id("right_subtitle")
+            if obj:
+                obj["color"] = color
+        elif role == "accent":
+            self.scanner_color_var.set(color)
+            self.store.data["under_header"]["scanner_color"] = color
+            for object_id in ["status_live", "activity_label", "scan_label"]:
+                obj = self.display_text_object_by_id(object_id)
+                if obj:
+                    obj["color"] = color
+            for row in self.top_rows():
+                for option in row.get("options", []):
+                    option["bar_color"] = color
+        elif role == "qr_outline":
+            self.qr_group()["outline"] = color
+            self.qr_cache_key = None
+
+    def reset_bitninja_dark_theme(self) -> None:
+        colors = default_theme_colors()
+        self.store.data["header"]["theme_colors"] = colors
+        for role, spec in BITNINJA_DARK_THEME.items():
+            self.theme_color_vars[role].set(spec["color"])
+            self.refresh_theme_swatch(role)
+            self.apply_theme_role_mappings(role, spec["color"])
+        self.store.data["header"]["output"]["background"] = colors["output_background"]
+        self.store.mark_dirty("theme-reset-bitninja-dark")
+        self.redraw_output()
+        self.color_status_var.set("Full output theme reset to Bitninja Dark")
+        self.store.data["under_header"].setdefault("scratch", {})["color_last_action"] = self.color_status_var.get()
+        self.schedule_autosave()
+
+    def qr_group(self) -> dict:
+        return ensure_qr_group_storage(self.store.data)
+
+    def qr_label_position(self) -> tuple[int, int]:
+        qr = self.qr_group()
+        return (
+            int(qr.get("x", QR_GROUP_DEFAULTS["x"])) + int(qr.get("label_offset_x", QR_GROUP_DEFAULTS["label_offset_x"])),
+            int(qr.get("y", QR_GROUP_DEFAULTS["y"])) + int(qr.get("label_offset_y", QR_GROUP_DEFAULTS["label_offset_y"])),
+        )
+
+    def sync_qr_label_absolute_storage(self) -> None:
+        label_obj = self.display_text_object_by_id("qr_label")
+        if label_obj is None:
+            return
+        x, y = self.qr_label_position()
+        label_obj["x"] = x
+        label_obj["y"] = y
+
+    def load_qr_group_into_controls(self) -> None:
+        qr = self.qr_group()
+        self._syncing_qr_vars = True
+        try:
+            self.qr_x_var.set(int(qr["x"]))
+            self.qr_y_var.set(int(qr["y"]))
+            self.qr_size_var.set(int(qr["size"]))
+            self.qr_foreground_var.set(str(qr["foreground"]))
+            self.qr_background_var.set(str(qr["background"]))
+            self._syncing_qr_vars = True
+            try:
+                self.qr_label_offset_x_var.set(int(qr["label_offset_x"]))
+                self.qr_label_offset_y_var.set(int(qr["label_offset_y"]))
+            finally:
+                self._syncing_qr_vars = False
+            self.qr_z_var.set(int(qr["z"]))
+        finally:
+            self._syncing_qr_vars = False
+        self.sync_qr_label_absolute_storage()
+
+    def schedule_qr_group_stage_only(self) -> None:
+        if self._syncing_qr_vars:
+            return
+        self.store.data["stage"]["save_body_pending"] = True
+        self.store.mark_dirty("qr-group-stage-updated")
+        self.schedule_autosave()
+
+    def apply_qr_group_without_reschedule(self) -> bool:
+        qr = self.qr_group()
+        try:
+            size = max(48, min(260, int(self.qr_size_var.get())))
+            x = max(0, min(OUTPUT_WIDTH - size, int(self.qr_x_var.get())))
+            y = max(0, min(OUTPUT_HEIGHT - size, int(self.qr_y_var.get())))
+            offset_x = max(-OUTPUT_WIDTH, min(OUTPUT_WIDTH, int(self.qr_label_offset_x_var.get())))
+            offset_y = max(-OUTPUT_HEIGHT, min(OUTPUT_HEIGHT, int(self.qr_label_offset_y_var.get())))
+            z = max(-1000, min(1000, int(self.qr_z_var.get())))
+        except (tk.TclError, ValueError):
+            return False
+        qr.update({
+            "x": x,
+            "y": y,
+            "size": size,
+            "label_offset_x": offset_x,
+            "label_offset_y": offset_y,
+            "z": z,
+            "foreground": normalize_hex_color(self.qr_foreground_var.get(), "#000000"),
+            "background": normalize_hex_color(self.qr_background_var.get(), "#ffffff"),
+        })
+        self._syncing_qr_vars = True
+        try:
+            self.qr_x_var.set(x)
+            self.qr_y_var.set(y)
+            self.qr_size_var.set(size)
+            self.qr_label_offset_x_var.set(offset_x)
+            self.qr_label_offset_y_var.set(offset_y)
+            self.qr_z_var.set(z)
+            self.qr_foreground_var.set(qr["foreground"])
+            self.qr_background_var.set(qr["background"])
+        finally:
+            self._syncing_qr_vars = False
+        self.sync_qr_label_absolute_storage()
+        self.qr_cache_key = None
+        self.store.mark_dirty("qr-group-updated")
+        return True
+
+    def apply_qr_group(self) -> None:
+        if not self.apply_qr_group_without_reschedule():
+            return
+        self.load_selected_display_text_into_controls()
+        self.redraw_output()
+        self.status_var.set("QR group applied")
+        self.schedule_autosave()
+
+    def choose_qr_color(self, target: str) -> None:
+        current = self.qr_foreground_var.get() if target == "foreground" else self.qr_background_var.get()
+        _rgb, color = colorchooser.askcolor(color=current, title=f"Choose QR {target} color")
+        if not color:
+            return
+        if target == "foreground":
+            self.qr_foreground_var.set(color.lower())
+        else:
+            self.qr_background_var.set(color.lower())
+        self.apply_qr_group()
+
+    def nudge_qr_group(self, dx: int, dy: int) -> None:
+        self.qr_x_var.set(int(self.qr_x_var.get()) + dx)
+        self.qr_y_var.set(int(self.qr_y_var.get()) + dy)
+        self.apply_qr_group()
+
+    def nudge_qr_label(self, dx: int, dy: int) -> None:
+        self.qr_label_offset_x_var.set(int(self.qr_label_offset_x_var.get()) + dx)
+        self.qr_label_offset_y_var.set(int(self.qr_label_offset_y_var.get()) + dy)
+        self.apply_qr_group()
+
+    def nudge_qr_z(self, dz: int) -> None:
+        self.qr_z_var.set(int(self.qr_z_var.get()) + dz)
+        self.apply_qr_group()
+
+    def bring_qr_to_front(self) -> None:
+        max_layer_z = max([int(layer.get("z", 0)) for layer in self.store.active_card().get("layers", [])] or [0])
+        self.qr_z_var.set(max_layer_z + 1)
+        self.apply_qr_group()
+
+    def pull_qr_to_back(self) -> None:
+        self.qr_z_var.set(int(self.qr_group().get("default_z", QR_GROUP_DEFAULTS["default_z"])))
+        self.apply_qr_group()
+
+    def reset_qr_group_defaults(self) -> None:
+        qr = self.qr_group()
+        qr.clear()
+        qr.update(copy.deepcopy(QR_GROUP_DEFAULTS))
+        self.load_qr_group_into_controls()
+        self.qr_cache_key = None
+        self.store.mark_dirty("qr-group-reset-defaults")
+        self.redraw_output()
+        self.status_var.set("QR group reset to defaults")
+        self.schedule_autosave()
 
     def top_rows(self) -> list[dict]:
         return ensure_top_row_storage(self.store.data)
@@ -2423,6 +3260,9 @@ class PerspectiveConsoleApp:
         obj = self.selected_display_text_object()
         if not obj:
             return
+        if obj.get("id") == "qr_label":
+            linked_x, linked_y = self.qr_label_position()
+            obj["x"], obj["y"] = linked_x, linked_y
         self.display_text_x_var.set(int(obj.get("x", 0)))
         self.display_text_y_var.set(int(obj.get("y", 0)))
         self.display_text_color_var.set(normalize_hex_color(obj.get("color", obj.get("default_color", "#e8fff5"))))
@@ -2472,6 +3312,16 @@ class PerspectiveConsoleApp:
         obj["font_weight"] = self.display_text_font_weight_var.get() if self.display_text_font_weight_var.get() in {"normal", "bold"} else "normal"
         obj["font_slant"] = self.display_text_font_slant_var.get() if self.display_text_font_slant_var.get() in {"roman", "italic"} else "roman"
         obj["visible"] = bool(self.display_text_visible_var.get())
+        if obj.get("id") == "qr_label":
+            qr = self.qr_group()
+            qr["label_offset_x"] = int(obj["x"]) - int(qr.get("x", QR_GROUP_DEFAULTS["x"]))
+            qr["label_offset_y"] = int(obj["y"]) - int(qr.get("y", QR_GROUP_DEFAULTS["y"]))
+            self._syncing_qr_vars = True
+            try:
+                self.qr_label_offset_x_var.set(int(qr["label_offset_x"]))
+                self.qr_label_offset_y_var.set(int(qr["label_offset_y"]))
+            finally:
+                self._syncing_qr_vars = False
         self.store.mark_dirty("display-text-updated")
         return True
 
@@ -2649,6 +3499,16 @@ class PerspectiveConsoleApp:
         y = max(0, min(OUTPUT_HEIGHT - min(h, OUTPUT_HEIGHT), int(y)))
         obj["x"] = x
         obj["y"] = y
+        if obj.get("id") == "qr_label":
+            qr = self.qr_group()
+            qr["label_offset_x"] = x - int(qr.get("x", QR_GROUP_DEFAULTS["x"]))
+            qr["label_offset_y"] = y - int(qr.get("y", QR_GROUP_DEFAULTS["y"]))
+            self._syncing_qr_vars = True
+            try:
+                self.qr_label_offset_x_var.set(int(qr["label_offset_x"]))
+                self.qr_label_offset_y_var.set(int(qr["label_offset_y"]))
+            finally:
+                self._syncing_qr_vars = False
         self.display_text_x_var.set(x)
         self.display_text_y_var.set(y)
         self.store.mark_dirty(reason)
@@ -2685,20 +3545,61 @@ class PerspectiveConsoleApp:
             y = safe_y2 - h
         self.set_display_text_position(obj, x, y, "display-text-snapped")
 
+    def active_deck_border_type(self) -> str:
+        card = self.store.active_card()
+        return normalize_deck_border_type(card.get("deck_border_type", ""))
+
+    def sync_deck_border_checkboxes(self) -> None:
+        selected = self.active_deck_border_type()
+        self._syncing_deck_border_vars = True
+        try:
+            for key, var in self.deck_border_vars.items():
+                var.set(key == selected)
+        finally:
+            self._syncing_deck_border_vars = False
+
+    def on_deck_border_checkbox(self, selected: str) -> None:
+        if self._syncing_deck_border_vars:
+            return
+        selected = normalize_deck_border_type(selected)
+        card = self.store.active_card()
+        turn_on = bool(self.deck_border_vars.get(selected) and self.deck_border_vars[selected].get())
+        card["deck_border_type"] = selected if turn_on else ""
+        self.sync_deck_border_checkboxes()
+        self.store.mark_dirty("deck-button-border-updated")
+        self.refresh_deck_buttons()
+        self.schedule_autosave()
+
+    def clear_deck_border(self) -> None:
+        self.store.active_card()["deck_border_type"] = ""
+        self.sync_deck_border_checkboxes()
+        self.store.mark_dirty("deck-button-border-cleared")
+        self.refresh_deck_buttons()
+        self.schedule_autosave()
+
     def refresh_deck_buttons(self) -> None:
         if self.deck_button_frame is None:
             return
         for child in self.deck_button_frame.winfo_children():
             child.destroy()
         self.card_buttons = {}
+        self.card_button_frames = {}
         active_id = self.store.data["header"].get("active_card_id", "")
         for card in self.store.cards()[:self.max_deck_buttons]:
             cid = card.get("id", "")
             label = card.get("label", cid or "Card")
             text = ("▶ " if cid == active_id else "  ") + label
-            btn = ttk.Button(self.deck_button_frame, text=text, command=lambda selected=cid: self.on_deck_button_clicked(selected), width=24)
-            btn.pack(fill="x", pady=3)
+            border_type = normalize_deck_border_type(card.get("deck_border_type", ""))
+            border_color = DECK_BORDER_STYLES.get(border_type, {}).get("color", "#4b4f56")
+            outer = tk.Frame(self.deck_button_frame, bg=border_color, bd=0, highlightthickness=0)
+            outer.pack(fill="x", pady=3)
+            btn = ttk.Button(outer, text=text, command=lambda selected=cid: self.on_deck_button_clicked(selected), width=24)
+            if border_type:
+                btn.pack(fill="x", padx=DECK_BORDER_WIDTH, pady=DECK_BORDER_WIDTH)
+            else:
+                btn.pack(fill="x")
             self.card_buttons[cid] = btn
+            self.card_button_frames[cid] = outer
         self.refresh_deck_storage()
 
     def refresh_deck_storage(self) -> None:
@@ -2833,6 +3734,7 @@ class PerspectiveConsoleApp:
         card["id"] = self.unique_card_id(base_id)
         card.setdefault("fields", {})
         card.setdefault("layers", [])
+        card["deck_border_type"] = normalize_deck_border_type(card.get("deck_border_type", ""))
         self.reassign_layer_ids_for_card_copy(card)
         return card
 
@@ -2969,6 +3871,10 @@ class PerspectiveConsoleApp:
         self.confidence_var.set(fields.get("confidence", "Still Checking"))
         self.verdict_var.set(fields.get("verdict", "Still Checking"))
         self.source_link_var.set(fields.get("sourceLink", ""))
+        wraps = ensure_box_wrap_storage(card)
+        self.claim_wrap_var.set(int(wraps["claim"]))
+        self.evidence_wrap_var.set(int(wraps["evidence"]))
+        self.question_wrap_var.set(int(wraps["openQuestion"]))
         for text_widget, value in [
             (self.claim_text, fields.get("claim", "")),
             (self.evidence_text, fields.get("evidence", "")),
@@ -2984,8 +3890,11 @@ class PerspectiveConsoleApp:
 
         self.refresh_sticker_selector()
         self.refresh_image_selector()
+        self.refresh_imported_image_library()
         self.refresh_text_layer_selector()
         self.refresh_top_row_editor()
+        self.sync_deck_border_checkboxes()
+        self.load_qr_group_into_controls()
 
     def emoji_layers(self) -> list[dict]:
         card = self.store.active_card()
@@ -3310,12 +4219,20 @@ class PerspectiveConsoleApp:
         if not layer:
             self.image_name_var.set(self.next_image_auto_name())
             self.image_path_var.set("")
+            self.image_rotation_var.set(0)
+            self.image_flip_x_var.set(False)
+            self.image_flip_y_var.set(False)
+            self.image_z_var.set(0)
             return
         self.image_name_var.set(self.clean_image_name(layer.get("name", ""), "Image"))
         self.image_x_var.set(int(layer.get("x", 760)))
         self.image_y_var.set(int(layer.get("y", 245)))
         self.image_scale_var.set(int(layer.get("scale", 100)))
         self.image_opacity_var.set(float(layer.get("opacity", 1.0)))
+        self.image_rotation_var.set(int(layer.get("rotation", 0)))
+        self.image_flip_x_var.set(bool(layer.get("flip_x", False)))
+        self.image_flip_y_var.set(bool(layer.get("flip_y", False)))
+        self.image_z_var.set(int(layer.get("z", 0)))
         path = layer.get("source_path", "")
         self.image_path_var.set(Path(path).name if path else "")
 
@@ -3331,22 +4248,49 @@ class PerspectiveConsoleApp:
             self.store.mark_dirty("image-stage-updated")
             self.schedule_autosave()
 
-    def import_png_layer(self) -> None:
+    def imported_image_paths(self) -> list[Path]:
         IMPORTED_PNG_DIR.mkdir(parents=True, exist_ok=True)
-        path = filedialog.askopenfilename(
-            title="Import PNG layer",
-            filetypes=[("PNG image", "*.png"), ("Image files", "*.png;*.jpg;*.jpeg;*.webp"), ("All files", "*.*")],
-            initialdir=str(IMPORTED_PNG_DIR if IMPORTED_PNG_DIR.exists() else USER_DATA_DIR),
-        )
-        if not path:
-            return
+        allowed = {".png", ".jpg", ".jpeg", ".webp"}
+        return sorted([path for path in IMPORTED_PNG_DIR.iterdir() if path.is_file() and path.suffix.lower() in allowed], key=lambda path: path.name.casefold())
 
-        src = Path(path)
+    def refresh_imported_image_library(self) -> None:
+        paths = self.imported_image_paths()
+        values = [path.name for path in paths]
+        if self.imported_image_selector is not None:
+            self.imported_image_selector.configure(values=values)
+        if self.imported_image_library_var.get() not in values:
+            self.imported_image_library_var.set(values[0] if values else "")
+
+    def find_reusable_imported_image(self, src: Path) -> Path | None:
+        try:
+            src_resolved = src.resolve()
+        except Exception:
+            src_resolved = src
+        for existing in self.imported_image_paths():
+            try:
+                if existing.resolve() == src_resolved:
+                    return existing
+            except Exception:
+                pass
+        try:
+            src_hash = file_sha256(src)
+        except Exception:
+            return None
+        for existing in self.imported_image_paths():
+            try:
+                if file_sha256(existing) == src_hash:
+                    return existing
+            except Exception:
+                continue
+        return None
+
+    def store_or_reuse_imported_image(self, src: Path) -> Path:
+        reusable = self.find_reusable_imported_image(src)
+        if reusable is not None:
+            return reusable
         dest = IMPORTED_PNG_DIR / src.name
         if dest.exists():
-            stem = src.stem
-            suffix = src.suffix
-            n = 1
+            stem, suffix, n = src.stem, src.suffix, 1
             while True:
                 candidate = IMPORTED_PNG_DIR / f"{stem}_{n}{suffix}"
                 if not candidate.exists():
@@ -3354,35 +4298,84 @@ class PerspectiveConsoleApp:
                     break
                 n += 1
         shutil.copy2(src, dest)
+        return dest
 
+    def add_image_layer_from_path(self, image_path: Path, reason: str = "png-image-added") -> dict | None:
         card = self.store.active_card()
-        if card.get("type") == "blank":
-            return
+        if card.get("type") == "blank" or not image_path.exists():
+            return None
         layers = card.setdefault("layers", [])
         existing_z = [int(layer.get("z", 0)) for layer in layers]
         z = (max(existing_z) + 1) if existing_z else 1
+        try:
+            x = max(0, min(OUTPUT_WIDTH, int(self.image_x_var.get())))
+            y = max(0, min(OUTPUT_HEIGHT, int(self.image_y_var.get())))
+            scale = max(10, min(400, int(self.image_scale_var.get())))
+            opacity = max(0.1, min(1.0, float(self.image_opacity_var.get())))
+            rotation = max(-359, min(359, int(self.image_rotation_var.get())))
+        except (tk.TclError, ValueError):
+            x, y, scale, opacity, rotation = 760, 245, 100, 1.0, 0
         layer_id = f"image-{uuid.uuid4().hex[:8]}"
         fallback_name = self.next_image_auto_name()
-        name_guess = self.clean_image_name(dest.stem.replace('_', ' '), fallback_name)
+        name_guess = self.clean_image_name(image_path.stem.replace('_', ' '), fallback_name)
         layer = {
             "id": layer_id,
             "type": "image",
             "name": name_guess,
-            "source_path": str(dest),
-            "x": max(0, min(OUTPUT_WIDTH, int(self.image_x_var.get()))),
-            "y": max(0, min(OUTPUT_HEIGHT, int(self.image_y_var.get()))),
-            "scale": max(10, min(400, int(self.image_scale_var.get()))),
-            "opacity": max(0.1, min(1.0, float(self.image_opacity_var.get()))),
+            "source_path": str(image_path),
+            "x": x,
+            "y": y,
+            "scale": scale,
+            "opacity": opacity,
+            "rotation": rotation,
+            "flip_x": bool(self.image_flip_x_var.get()),
+            "flip_y": bool(self.image_flip_y_var.get()),
             "z": z,
             "visible": True,
         }
         layers.append(layer)
         self.selected_image_id_var.set(layer_id)
-        self.image_path_var.set(dest.name)
-        self.store.mark_dirty("png-image-imported")
+        self.image_path_var.set(image_path.name)
+        self.image_z_var.set(z)
+        self.store.mark_dirty(reason)
+        self.refresh_imported_image_library()
         self.refresh_image_selector()
         self.redraw_output()
         self.schedule_autosave()
+        return layer
+
+    def import_png_layer(self) -> None:
+        IMPORTED_PNG_DIR.mkdir(parents=True, exist_ok=True)
+        path = filedialog.askopenfilename(
+            title="Import image layer",
+            filetypes=[("Image files", "*.png;*.jpg;*.jpeg;*.webp"), ("PNG image", "*.png"), ("All files", "*.*")],
+            initialdir=str(IMPORTED_PNG_DIR if IMPORTED_PNG_DIR.exists() else USER_DATA_DIR),
+        )
+        if not path:
+            return
+        src = Path(path)
+        reusable_before = self.find_reusable_imported_image(src)
+        try:
+            dest = reusable_before or self.store_or_reuse_imported_image(src)
+        except Exception as exc:
+            messagebox.showerror("Import image", f"Could not import image:\n{exc}")
+            return
+        reused = reusable_before is not None
+        self.add_image_layer_from_path(dest, "png-image-reused" if reused else "png-image-imported")
+        self.status_var.set(f"Using imported image: {dest.name}")
+
+    def reuse_imported_png_layer(self) -> None:
+        name = self.imported_image_library_var.get().strip()
+        if not name:
+            self.status_var.set("No imported image is available to reuse")
+            return
+        path = IMPORTED_PNG_DIR / name
+        if not path.is_file():
+            self.refresh_imported_image_library()
+            self.status_var.set("Selected imported image is no longer available")
+            return
+        self.add_image_layer_from_path(path, "png-image-library-reused")
+        self.status_var.set(f"Reused imported image without another copy: {name}")
 
     def apply_image_editor(self) -> None:
         layer = self.selected_image_layer()
@@ -3393,6 +4386,8 @@ class PerspectiveConsoleApp:
             y = max(0, min(OUTPUT_HEIGHT, int(self.image_y_var.get())))
             scale = max(10, min(400, int(self.image_scale_var.get())))
             opacity = max(0.1, min(1.0, float(self.image_opacity_var.get())))
+            rotation = max(-359, min(359, int(self.image_rotation_var.get())))
+            z = max(-1000, min(1000, int(self.image_z_var.get())))
         except (tk.TclError, ValueError):
             return
         layer["name"] = self.clean_image_name(self.image_name_var.get(), self.next_image_auto_name())
@@ -3400,6 +4395,11 @@ class PerspectiveConsoleApp:
         layer["y"] = y
         layer["scale"] = scale
         layer["opacity"] = opacity
+        layer["rotation"] = rotation
+        layer["flip_x"] = bool(self.image_flip_x_var.get())
+        layer["flip_y"] = bool(self.image_flip_y_var.get())
+        layer["z"] = z
+        self.rendered_image_cache.clear()
         self.store.mark_dirty("png-image-updated")
         self.refresh_image_selector()
         self.redraw_output()
@@ -3410,7 +4410,8 @@ class PerspectiveConsoleApp:
         if not layer:
             return
         max_z = max([int(item.get("z", 0)) for item in self.store.active_card().get("layers", [])] or [0])
-        layer["z"] = min(max_z + 1, int(layer.get("z", 0)) + 1)
+        layer["z"] = min(1000, max_z + 1, int(layer.get("z", 0)) + 1)
+        self.image_z_var.set(int(layer["z"]))
         self.store.mark_dirty("png-image-layer-up")
         self.refresh_image_selector()
         self.redraw_output()
@@ -3420,7 +4421,8 @@ class PerspectiveConsoleApp:
         layer = self.selected_image_layer()
         if not layer:
             return
-        layer["z"] = max(0, int(layer.get("z", 0)) - 1)
+        layer["z"] = max(-1000, int(layer.get("z", 0)) - 1)
+        self.image_z_var.set(int(layer["z"]))
         self.store.mark_dirty("png-image-layer-down")
         self.refresh_image_selector()
         self.redraw_output()
@@ -3505,6 +4507,10 @@ class PerspectiveConsoleApp:
             self.text_layer_name_var.set(self.next_text_layer_auto_name())
             self.text_layer_color_var.set("#e8fff5")
             self.text_layer_wrap_var.set(260)
+            self.text_layer_rotation_var.set(0)
+            self.text_layer_flip_x_var.set(False)
+            self.text_layer_flip_y_var.set(False)
+            self.text_layer_z_var.set(0)
             if self.text_layer_text is not None:
                 self.text_layer_text.delete("1.0", "end")
                 self.text_layer_text.insert("1.0", "New text layer")
@@ -3517,6 +4523,10 @@ class PerspectiveConsoleApp:
         self.text_layer_opacity_var.set(float(layer.get("opacity", 1.0)))
         self.text_layer_color_var.set(normalize_hex_color(layer.get("color", "#e8fff5")))
         self.text_layer_wrap_var.set(int(layer.get("wrap_width", 260)))
+        self.text_layer_rotation_var.set(int(layer.get("rotation", 0)))
+        self.text_layer_flip_x_var.set(bool(layer.get("flip_x", False)))
+        self.text_layer_flip_y_var.set(bool(layer.get("flip_y", False)))
+        self.text_layer_z_var.set(int(layer.get("z", 0)))
         if self.text_layer_text is not None:
             self.text_layer_text.delete("1.0", "end")
             self.text_layer_text.insert("1.0", layer.get("text", ""))
@@ -3564,8 +4574,9 @@ class PerspectiveConsoleApp:
             size = max(8, min(72, int(self.text_layer_size_var.get())))
             opacity = max(0.1, min(1.0, float(self.text_layer_opacity_var.get())))
             wrap_width = max(80, min(900, int(self.text_layer_wrap_var.get())))
+            rotation = max(-359, min(359, int(self.text_layer_rotation_var.get())))
         except (tk.TclError, ValueError):
-            x, y, size, opacity, wrap_width = 740, 185, 22, 1.0, 260
+            x, y, size, opacity, wrap_width, rotation = 740, 185, 22, 1.0, 260, 0
         layer = {
             "id": layer_id,
             "type": "text",
@@ -3577,6 +4588,9 @@ class PerspectiveConsoleApp:
             "opacity": opacity,
             "color": normalize_hex_color(self.text_layer_color_var.get()),
             "wrap_width": wrap_width,
+            "rotation": rotation,
+            "flip_x": bool(self.text_layer_flip_x_var.get()),
+            "flip_y": bool(self.text_layer_flip_y_var.get()),
             "z": z,
             "visible": True,
         }
@@ -3597,6 +4611,8 @@ class PerspectiveConsoleApp:
             size = max(8, min(72, int(self.text_layer_size_var.get())))
             opacity = max(0.1, min(1.0, float(self.text_layer_opacity_var.get())))
             wrap_width = max(80, min(900, int(self.text_layer_wrap_var.get())))
+            rotation = max(-359, min(359, int(self.text_layer_rotation_var.get())))
+            z = max(-1000, min(1000, int(self.text_layer_z_var.get())))
         except (tk.TclError, ValueError):
             return
         layer["name"] = self.clean_text_layer_name(self.text_layer_name_var.get(), self.next_text_layer_auto_name())
@@ -3607,6 +4623,11 @@ class PerspectiveConsoleApp:
         layer["opacity"] = opacity
         layer["color"] = normalize_hex_color(self.text_layer_color_var.get())
         layer["wrap_width"] = wrap_width
+        layer["rotation"] = rotation
+        layer["flip_x"] = bool(self.text_layer_flip_x_var.get())
+        layer["flip_y"] = bool(self.text_layer_flip_y_var.get())
+        layer["z"] = z
+        self.rendered_text_cache.clear()
         self.store.mark_dirty("text-layer-updated")
         self.refresh_text_layer_selector()
         self.redraw_output()
@@ -3617,7 +4638,8 @@ class PerspectiveConsoleApp:
         if not layer:
             return
         max_z = max([int(item.get("z", 0)) for item in self.store.active_card().get("layers", [])] or [0])
-        layer["z"] = min(max_z + 1, int(layer.get("z", 0)) + 1)
+        layer["z"] = min(1000, max_z + 1, int(layer.get("z", 0)) + 1)
+        self.text_layer_z_var.set(int(layer["z"]))
         self.store.mark_dirty("text-layer-up")
         self.refresh_text_layer_selector()
         self.redraw_output()
@@ -3627,7 +4649,8 @@ class PerspectiveConsoleApp:
         layer = self.selected_text_layer()
         if not layer:
             return
-        layer["z"] = max(0, int(layer.get("z", 0)) - 1)
+        layer["z"] = max(-1000, int(layer.get("z", 0)) - 1)
+        self.text_layer_z_var.set(int(layer["z"]))
         self.store.mark_dirty("text-layer-down")
         self.refresh_text_layer_selector()
         self.redraw_output()
@@ -3737,19 +4760,21 @@ class PerspectiveConsoleApp:
             size = max(8, min(96, int(layer.get("size", 26))))
             return (size, size)
         if layer_type == "image":
-            source_path = Path(layer.get("source_path", ""))
-            scale = max(10, min(400, int(layer.get("scale", 100))))
-            if source_path.exists() and Image is not None:
-                try:
-                    base = self.base_image_cache.get(str(source_path))
-                    if base is None:
-                        base = Image.open(source_path).convert("RGBA")
-                        self.base_image_cache[str(source_path)] = base
-                    return (max(4, int(base.width * scale / 100)), max(4, int(base.height * scale / 100)))
-                except Exception:
-                    pass
+            try:
+                rendered = self.transformed_image_pil(layer)
+                if rendered is not None:
+                    return rendered.size
+            except Exception:
+                pass
             return (100, 100)
         if layer_type == "text":
+            if int(layer.get("rotation", 0)) or bool(layer.get("flip_x", False)) or bool(layer.get("flip_y", False)):
+                try:
+                    rendered = self.render_text_layer_pil(layer)
+                    if rendered is not None:
+                        return rendered.size
+                except Exception:
+                    pass
             width = max(80, min(900, int(layer.get("wrap_width", 260))))
             txt = str(layer.get("text", ""))
             size = max(8, min(72, int(layer.get("size", 22))))
@@ -3826,6 +4851,79 @@ class PerspectiveConsoleApp:
     def snap_text_layer(self, target: str) -> None:
         self.snap_layer(self.selected_text_layer(), target, "text-layer-snapped")
 
+    def render_z_values(self, exclude_layer_id: str = "") -> list[int]:
+        values = [int(self.qr_group().get("z", 0))]
+        for layer in self.store.active_card().get("layers", []):
+            if exclude_layer_id and layer.get("id") == exclude_layer_id:
+                continue
+            values.append(int(layer.get("z", 0)))
+        return values or [0]
+
+    def set_layer_z_value(self, layer: dict | None, z: int, var: tk.IntVar, reason: str) -> None:
+        if not layer:
+            return
+        z = max(-1000, min(1000, int(z)))
+        layer["z"] = z
+        var.set(z)
+        self.store.mark_dirty(reason)
+        self.refresh_image_selector()
+        self.refresh_text_layer_selector()
+        self.redraw_output()
+        self.schedule_autosave()
+
+    def nudge_image_z(self, dz: int) -> None:
+        layer = self.selected_image_layer()
+        if layer:
+            self.set_layer_z_value(layer, int(layer.get("z", 0)) + dz, self.image_z_var, "png-image-z-nudged")
+
+    def bring_image_to_front(self) -> None:
+        layer = self.selected_image_layer()
+        if layer:
+            self.set_layer_z_value(layer, max(self.render_z_values(layer.get("id", ""))) + 1, self.image_z_var, "png-image-brought-front")
+
+    def pull_image_to_back(self) -> None:
+        layer = self.selected_image_layer()
+        if layer:
+            self.set_layer_z_value(layer, min(self.render_z_values(layer.get("id", ""))) - 1, self.image_z_var, "png-image-pulled-back")
+
+    def nudge_text_z(self, dz: int) -> None:
+        layer = self.selected_text_layer()
+        if layer:
+            self.set_layer_z_value(layer, int(layer.get("z", 0)) + dz, self.text_layer_z_var, "text-layer-z-nudged")
+
+    def bring_text_to_front(self) -> None:
+        layer = self.selected_text_layer()
+        if layer:
+            self.set_layer_z_value(layer, max(self.render_z_values(layer.get("id", ""))) + 1, self.text_layer_z_var, "text-layer-brought-front")
+
+    def pull_text_to_back(self) -> None:
+        layer = self.selected_text_layer()
+        if layer:
+            self.set_layer_z_value(layer, min(self.render_z_values(layer.get("id", ""))) - 1, self.text_layer_z_var, "text-layer-pulled-back")
+
+    def set_box_wrap_to_max(self, key: str, variable: tk.IntVar) -> None:
+        maximum = boxed_content_wrap_limit(key)
+        variable.set(maximum)
+        self.apply_editor_to_card()
+        labels = {"claim": "Boxed Content #1", "evidence": "Boxed Content #2", "openQuestion": "Boxed Content #3"}
+        self.status_var.set(f"{labels.get(key, key)} wrap set to available max: {maximum}px")
+
+    def normalized_editor_box_wraps(self) -> dict:
+        values = {
+            "claim": normalize_box_wrap_width("claim", self.claim_wrap_var.get()),
+            "evidence": normalize_box_wrap_width("evidence", self.evidence_wrap_var.get()),
+            "openQuestion": normalize_box_wrap_width("openQuestion", self.question_wrap_var.get()),
+        }
+        # Keep the visible controls honest when a typed value exceeds the safe
+        # output-region limit; do not silently show an unsaved oversized number.
+        if self.claim_wrap_var.get() != values["claim"]:
+            self.claim_wrap_var.set(values["claim"])
+        if self.evidence_wrap_var.get() != values["evidence"]:
+            self.evidence_wrap_var.set(values["evidence"])
+        if self.question_wrap_var.get() != values["openQuestion"]:
+            self.question_wrap_var.set(values["openQuestion"])
+        return values
+
     def editor_values(self) -> dict:
         return {
             "sourceType": self.source_type_var.get().strip() or "Unknown",
@@ -3842,6 +4940,8 @@ class PerspectiveConsoleApp:
         card["label"] = (self.card_label_var.get() or card.get("label", "Card")).strip()[:32] or "Card"
         if card.get("type") == "source_analyzer":
             card["fields"] = self.editor_values()
+            card["box_wrap_widths"] = self.normalized_editor_box_wraps()
+            card["box_wrap_model"] = BOX_WRAP_MODEL
         self.store.data["under_header"]["scan_loop"] = bool(self.scan_loop_var.get())
         self.store.data["under_header"]["scan_speed_ms"] = int(self.scan_speed_var.get())
         self.store.data["under_header"]["scanner_color"] = self.scanner_color_var.get().strip() or "#00ff99"
@@ -3850,6 +4950,7 @@ class PerspectiveConsoleApp:
         self.store.mark_dirty("editor-applied")
         self.apply_display_text_editor_without_reschedule()
         self.apply_top_row_option_without_reschedule()
+        self.apply_qr_group_without_reschedule()
         self.refresh_top_dropdown_values()
         self.refresh_deck_buttons()
         self.redraw_output()
@@ -3886,7 +4987,8 @@ class PerspectiveConsoleApp:
         self.apply_editor_to_card_without_reschedule()
         display_changed = self.apply_display_text_editor_without_reschedule()
         top_row_changed = self.apply_top_row_option_without_reschedule()
-        if display_changed or top_row_changed:
+        qr_changed = self.apply_qr_group_without_reschedule()
+        if display_changed or top_row_changed or qr_changed:
             self.refresh_top_dropdown_values()
             self.redraw_output()
         self.store.save("autosave")
@@ -3897,12 +4999,15 @@ class PerspectiveConsoleApp:
         card["label"] = (self.card_label_var.get() or card.get("label", "Card")).strip()[:32] or "Card"
         if card.get("type") == "source_analyzer":
             card["fields"] = self.editor_values()
+            card["box_wrap_widths"] = self.normalized_editor_box_wraps()
+            card["box_wrap_model"] = BOX_WRAP_MODEL
         self.store.data["under_header"]["scan_loop"] = bool(self.scan_loop_var.get())
         self.store.data["under_header"]["scan_speed_ms"] = int(self.scan_speed_var.get())
         self.store.data["under_header"]["scanner_color"] = self.scanner_color_var.get().strip() or "#00ff99"
         self.store.data["under_header"]["output_visible"] = bool(self.output_visible_var.get())
         self.store.data["header"]["resource_profile"] = self.resource_profile_var.get()
         self.apply_top_row_option_without_reschedule()
+        self.apply_qr_group_without_reschedule()
         self.store.mark_dirty("editor-applied")
 
     def redraw_output(self) -> None:
@@ -3916,18 +5021,20 @@ class PerspectiveConsoleApp:
 
     def draw_blank_panel(self) -> None:
         c = self.output_canvas
-        c.configure(bg="#07090c")
-        c.create_rectangle(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT, fill="#07090c", outline="")
-        c.create_text(OUTPUT_WIDTH // 2, OUTPUT_HEIGHT // 2, text="", fill="#07090c", font=("TkDefaultFont", 1))
+        blank_bg = self.theme_color("blank_background")
+        c.configure(bg=blank_bg)
+        c.create_rectangle(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT, fill=blank_bg, outline="")
+        c.create_text(OUTPUT_WIDTH // 2, OUTPUT_HEIGHT // 2, text="", fill=blank_bg, font=("TkDefaultFont", 1))
 
     def draw_source_analyzer(self, card: dict) -> None:
         c = self.output_canvas
-        bg = self.store.data["header"]["output"].get("background", "#121418")
-        accent = self.scanner_color_var.get().strip() or "#00ff99"
+        bg = self.theme_color("output_background")
+        self.store.data["header"]["output"]["background"] = bg
+        accent = normalize_hex_color(self.scanner_color_var.get().strip() or self.theme_color("accent"), self.theme_color("accent"))
         c.configure(bg=bg)
         c.create_rectangle(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT, fill=bg, outline="")
-        c.create_rectangle(14, 14, OUTPUT_WIDTH - 14, OUTPUT_HEIGHT - 14, fill="#10151b", outline="#26333a", width=2)
-        c.create_line(24, 54, OUTPUT_WIDTH - 24, 54, fill="#26333a")
+        c.create_rectangle(14, 14, OUTPUT_WIDTH - 14, OUTPUT_HEIGHT - 14, fill=self.theme_color("main_panel_background"), outline=self.theme_color("main_border"), width=2)
+        c.create_line(24, 54, OUTPUT_WIDTH - 24, 54, fill=self.theme_color("main_border"))
 
         bracket = 28
         for x1, y1, sx, sy in [(20, 20, 1, 1), (OUTPUT_WIDTH - 20, 20, -1, 1), (20, OUTPUT_HEIGHT - 20, 1, -1), (OUTPUT_WIDTH - 20, OUTPUT_HEIGHT - 20, -1, -1)]:
@@ -3938,7 +5045,7 @@ class PerspectiveConsoleApp:
         self.draw_display_text(c, "status_live")
 
         block_x1, block_y1, block_x2, block_y2 = 40, 72, OUTPUT_WIDTH - 40, 188
-        c.create_rectangle(block_x1, block_y1, block_x2, block_y2, fill="#0c1116", outline="#18242b")
+        c.create_rectangle(block_x1, block_y1, block_x2, block_y2, fill=self.theme_color("info_panel_background"), outline=self.theme_color("standard_line"))
 
         fields = card.get("fields", {})
         link_text = fields.get("sourceLink", "").strip()
@@ -3950,54 +5057,67 @@ class PerspectiveConsoleApp:
         right_col_x1 = right_col_x2 - right_col_width
 
         if has_link:
-            qr_size = 92
+            # Keep the original column reservation stable even when the QR Group is
+            # moved elsewhere. This prevents manual QR positioning from reshaping rows.
+            reserved_qr_size = QR_GROUP_DEFAULTS["size"]
             qr_gap = 18
-            qr_x2 = right_col_x1 - qr_gap
-            qr_x1 = qr_x2 - qr_size
-            left_x2 = qr_x1 - qr_gap
+            reserved_qr_x2 = right_col_x1 - qr_gap
+            reserved_qr_x1 = reserved_qr_x2 - reserved_qr_size
+            left_x2 = reserved_qr_x1 - qr_gap
         else:
-            qr_size = 0
-            qr_x1 = qr_x2 = None
             left_x2 = right_col_x1 - 18
 
         left_x1 = 52
 
         # Column separators
-        c.create_line(left_x2, block_y1 + 12, left_x2, block_y2 - 12, fill="#203037")
+        c.create_line(left_x2, block_y1 + 12, left_x2, block_y2 - 12, fill=self.theme_color("standard_line"))
         if has_link:
-            c.create_line(right_col_x1 - 9, block_y1 + 12, right_col_x1 - 9, block_y2 - 12, fill="#203037")
+            c.create_line(right_col_x1 - 9, block_y1 + 12, right_col_x1 - 9, block_y2 - 12, fill=self.theme_color("standard_line"))
 
         self.draw_row(c, "row_source_type", fields.get("sourceType", "Unknown"), accent, value_x=200, line_end=left_x2 - 10)
         self.draw_row(c, "row_confidence", fields.get("confidence", "Still Checking"), accent, value_x=200, line_end=left_x2 - 10)
         self.draw_row(c, "row_verdict", fields.get("verdict", "Still Checking"), accent, value_x=200, line_end=left_x2 - 10)
 
+        # QR Group is rendered with user layers below, so its z value can move it
+        # in front of or behind emoji/PNG/text layers as one linked section.
+
+        # Display Edit positions are authoritative for every stored text object.
+        self.draw_display_text(c, "right_brand")
+        self.draw_display_text(c, "right_subtitle")
         if has_link:
-            self.draw_display_text(c, "qr_label", override_x=int(qr_x1 + qr_size / 2), override_y=84)
-            c.create_rectangle(qr_x1, 92, qr_x2, 92 + qr_size, fill="#ffffff", outline="#d8e2de")
-            self.draw_qr(c, qr_x1, 92, qr_size, link_text)
+            parse_target = link_text if "://" in link_text else "//" + link_text
+            parsed = urlparse(parse_target)
+            host = (parsed.netloc or parsed.path.split("/")[0] or "link").strip().lower()
+            self.draw_display_text(c, "activity_label")
+            self.draw_display_text(c, "host_label", runtime_vars={"host": host})
 
-        # Third column right aligned to free space for first column.
-        right_text_x = right_col_x2 - 4
-        self.draw_display_text(c, "right_brand", override_x=right_text_x, override_y=106)
-        self.draw_display_text(c, "right_subtitle", override_x=right_text_x, override_y=126)
+        wraps = ensure_box_wrap_storage(card)
+        for wrap_key in ("claim", "evidence", "openQuestion"):
+            geometry = boxed_content_geometry(wrap_key)
+            self.draw_boxed_text(
+                c,
+                geometry["x"],
+                geometry["y"],
+                geometry["label_id"],
+                fields.get(geometry["field"], ""),
+                width=geometry["width"],
+                height=geometry["height"],
+                accent=accent,
+                max_lines=2,
+                wrap_width=wraps[wrap_key],
+            )
+
+        render_items = []
         if has_link:
-            host = urlparse(link_text).netloc or "link ready"
-            activity = "ACTIVITY: LINK READY"
-            host_label = f"HOST: {host}"
-        else:
-            activity = ""
-            host_label = ""
-        if activity:
-            self.draw_display_text(c, "activity_label", override_x=right_text_x, override_y=154, override_text=activity)
-        if host_label:
-            self.draw_display_text(c, "host_label", runtime_vars={"host": host}, override_x=right_text_x, override_y=172)
+            render_items.append((int(self.qr_group().get("z", 0)), 0, "qr", None))
+        for layer in card.get("layers", []):
+            render_items.append((int(layer.get("z", 0)), 1, "layer", layer))
 
-        self.draw_boxed_text(c, 52, 232, "box_claim_label", fields.get("claim", ""), width=856, height=62, accent=accent, max_lines=2)
-        self.draw_boxed_text(c, 52, 322, "box_evidence_label", fields.get("evidence", ""), width=856, height=62, accent=accent, max_lines=2)
-        self.draw_boxed_text(c, 52, 412, "box_question_label", fields.get("openQuestion", ""), width=856, height=58, accent=accent, max_lines=2)
-
-        for layer in sorted(card.get("layers", []), key=lambda item: item.get("z", 0)):
-            if layer.get("visible", True) is False:
+        for _z, _tie, item_type, layer in sorted(render_items, key=lambda item: (item[0], item[1])):
+            if item_type == "qr":
+                self.draw_qr_group(c, link_text)
+                continue
+            if not layer or layer.get("visible", True) is False:
                 continue
             if layer.get("type") == "image":
                 self.draw_image_layer(c, layer)
@@ -4011,8 +5131,82 @@ class PerspectiveConsoleApp:
                 if layer.get("id") == "emoji-default-scan" and ly <= 45:
                     ly = 210
                 opacity = max(0.1, min(1.0, float(layer.get("opacity", 1.0))))
-                fill = "#e8fff5" if opacity >= 0.75 else "#9fb8af" if opacity >= 0.45 else "#60736d"
+                fill = blend_hex_colors(self.theme_color("standard_text"), bg, opacity)
                 c.create_text(lx, ly, text=layer.get("text", "🔍"), fill=fill, font=("TkDefaultFont", int(layer.get("size", 26))))
+
+    def pil_font_for_size(self, size: int):
+        size = max(8, min(144, int(size)))
+        for candidate in ["DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf"]:
+            try:
+                return ImageFont.truetype(candidate, size=size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    def wrap_text_for_pil(self, text: str, font, max_width: int) -> str:
+        draw = ImageDraw.Draw(Image.new("RGBA", (4, 4), (0, 0, 0, 0)))
+        output = []
+        for paragraph in str(text).splitlines() or [""]:
+            words = paragraph.split()
+            if not words:
+                output.append("")
+                continue
+            line = ""
+            for word in words:
+                candidate = word if not line else line + " " + word
+                try:
+                    measured = draw.textlength(candidate, font=font)
+                except Exception:
+                    measured = len(candidate) * max(6, getattr(font, "size", 12) * 0.6)
+                if measured <= max_width or not line:
+                    line = candidate
+                else:
+                    output.append(line)
+                    line = word
+            if line:
+                output.append(line)
+        return "\n".join(output)
+
+    def render_text_layer_pil(self, layer: dict):
+        if Image is None or ImageDraw is None or ImageFont is None:
+            return None
+        txt = str(layer.get("text", ""))
+        if not txt.strip():
+            return None
+        size = max(8, min(72, int(layer.get("size", 22))))
+        wrap_width = max(80, min(900, int(layer.get("wrap_width", 260))))
+        rotation = max(-359, min(359, int(layer.get("rotation", 0))))
+        flip_x = bool(layer.get("flip_x", False))
+        flip_y = bool(layer.get("flip_y", False))
+        opacity = max(0.1, min(1.0, float(layer.get("opacity", 1.0))))
+        color = normalize_hex_color(layer.get("color", self.theme_color("standard_text")), self.theme_color("standard_text"))
+        cache_key = (txt, size, wrap_width, rotation, flip_x, flip_y, round(opacity, 2), color)
+        cached = self.rendered_text_cache.get(cache_key)
+        if cached is not None:
+            return cached.copy()
+        font = self.pil_font_for_size(size)
+        wrapped = self.wrap_text_for_pil(txt, font, wrap_width)
+        probe = ImageDraw.Draw(Image.new("RGBA", (4, 4), (0, 0, 0, 0)))
+        try:
+            bbox = probe.multiline_textbbox((0, 0), wrapped, font=font, spacing=4)
+            width = max(4, min(1000, bbox[2] - bbox[0] + 8))
+            height = max(4, min(1000, bbox[3] - bbox[1] + 8))
+        except Exception:
+            width = wrap_width + 8
+            height = max(size + 8, (wrapped.count("\n") + 1) * (size + 4))
+        image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        rgb = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+        draw.multiline_text((4, 4), wrapped, font=font, fill=(*rgb, int(255 * opacity)), spacing=4)
+        if flip_x:
+            image = ImageOps.mirror(image)
+        if flip_y:
+            image = ImageOps.flip(image)
+        if rotation:
+            resampling = getattr(getattr(Image, "Resampling", Image), "BICUBIC")
+            image = image.rotate(-rotation, expand=True, resample=resampling)
+        self.rendered_text_cache[cache_key] = image.copy()
+        return image
 
     def draw_text_layer(self, canvas: tk.Canvas, layer: dict) -> None:
         txt = str(layer.get("text", ""))
@@ -4023,35 +5217,62 @@ class PerspectiveConsoleApp:
         size = max(8, min(72, int(layer.get("size", 22))))
         wrap_width = max(80, min(900, int(layer.get("wrap_width", 260))))
         opacity = max(0.1, min(1.0, float(layer.get("opacity", 1.0))))
-        color = blend_hex_colors(layer.get("color", "#e8fff5"), "#121418", opacity)
-        canvas.create_text(x, y, anchor="nw", text=txt, fill=color, width=wrap_width, font=("TkDefaultFont", size))
+        rotation = int(layer.get("rotation", 0))
+        flip_x = bool(layer.get("flip_x", False))
+        flip_y = bool(layer.get("flip_y", False))
+        if not rotation and not flip_x and not flip_y:
+            color = blend_hex_colors(layer.get("color", self.theme_color("standard_text")), self.theme_color("output_background"), opacity)
+            canvas.create_text(x, y, anchor="nw", text=txt, fill=color, width=wrap_width, font=("TkDefaultFont", size))
+            return
+        image = self.render_text_layer_pil(layer)
+        if image is None or ImageTk is None:
+            return
+        photo = ImageTk.PhotoImage(image)
+        self.render_image_refs.append(photo)
+        canvas.create_image(x, y, anchor="nw", image=photo)
+
+    def transformed_image_pil(self, layer: dict):
+        source_path = Path(layer.get("source_path", ""))
+        if not source_path.exists() or Image is None:
+            return None
+        base = self.base_image_cache.get(str(source_path))
+        if base is None:
+            base = Image.open(source_path).convert("RGBA")
+            self.base_image_cache[str(source_path)] = base
+        scale = max(10, min(400, int(layer.get("scale", 100))))
+        opacity = max(0.1, min(1.0, float(layer.get("opacity", 1.0))))
+        rotation = max(-359, min(359, int(layer.get("rotation", 0))))
+        flip_x = bool(layer.get("flip_x", False))
+        flip_y = bool(layer.get("flip_y", False))
+        width = max(4, int(base.width * scale / 100))
+        height = max(4, int(base.height * scale / 100))
+        cache_key = (str(source_path), width, height, round(opacity, 2), rotation, flip_x, flip_y)
+        cached = self.rendered_image_cache.get(cache_key)
+        if cached is not None:
+            return cached.copy()
+        resized = base.resize((width, height), Image.LANCZOS)
+        if flip_x:
+            resized = ImageOps.mirror(resized)
+        if flip_y:
+            resized = ImageOps.flip(resized)
+        if rotation:
+            resampling = getattr(getattr(Image, "Resampling", Image), "BICUBIC")
+            resized = resized.rotate(-rotation, expand=True, resample=resampling)
+        if opacity < 0.999:
+            alpha = resized.getchannel("A")
+            alpha = alpha.point(lambda a: int(a * opacity))
+            resized.putalpha(alpha)
+        self.rendered_image_cache[cache_key] = resized.copy()
+        return resized
 
     def draw_image_layer(self, canvas: tk.Canvas, layer: dict) -> None:
-        source_path = Path(layer.get("source_path", ""))
-        if not source_path.exists() or Image is None or ImageTk is None:
+        if ImageTk is None:
             return
-
         try:
-            base = self.base_image_cache.get(str(source_path))
-            if base is None:
-                base = Image.open(source_path).convert("RGBA")
-                self.base_image_cache[str(source_path)] = base
-
-            scale = max(10, min(400, int(layer.get("scale", 100))))
-            opacity = max(0.1, min(1.0, float(layer.get("opacity", 1.0))))
-            width = max(4, int(base.width * scale / 100))
-            height = max(4, int(base.height * scale / 100))
-            cache_key = (str(source_path), width, height, round(opacity, 2))
-            photo = self.rendered_image_cache.get(cache_key)
-            if photo is None:
-                resized = base.resize((width, height), Image.LANCZOS)
-                if opacity < 0.999:
-                    alpha = resized.getchannel("A")
-                    alpha = alpha.point(lambda a: int(a * opacity))
-                    resized.putalpha(alpha)
-                photo = ImageTk.PhotoImage(resized)
-                self.rendered_image_cache[cache_key] = photo
-
+            rendered = self.transformed_image_pil(layer)
+            if rendered is None:
+                return
+            photo = ImageTk.PhotoImage(rendered)
             x = int(layer.get("x", 760))
             y = int(layer.get("y", 245))
             self.render_image_refs.append(photo)
@@ -4059,19 +5280,37 @@ class PerspectiveConsoleApp:
         except Exception:
             return
 
+    def draw_qr_group(self, canvas: tk.Canvas, link: str) -> None:
+        qr = self.qr_group()
+        x = int(qr.get("x", QR_GROUP_DEFAULTS["x"]))
+        y = int(qr.get("y", QR_GROUP_DEFAULTS["y"]))
+        size = int(qr.get("size", QR_GROUP_DEFAULTS["size"]))
+        background = normalize_hex_color(qr.get("background", "#ffffff"), "#ffffff")
+        outline = normalize_hex_color(qr.get("outline", self.theme_color("qr_outline")), self.theme_color("qr_outline"))
+        label_x, label_y = self.qr_label_position()
+        self.draw_display_text(canvas, "qr_label", override_x=label_x, override_y=label_y)
+        canvas.create_rectangle(x, y, x + size, y + size, fill=background, outline=outline)
+        self.draw_qr(canvas, x, y, size, link)
+
     def draw_qr(self, canvas: tk.Canvas, x: int, y: int, size: int, link: str) -> None:
         link = (link or "").strip()
         if not link or not QR_AVAILABLE:
             return
-        inner_pad = 6
-        if self.qr_cache_link != link:
+        qr_group = self.qr_group()
+        foreground = normalize_hex_color(qr_group.get("foreground", "#000000"), "#000000")
+        background = normalize_hex_color(qr_group.get("background", "#ffffff"), "#ffffff")
+        inner_pad = max(4, min(12, size // 14))
+        render_size = max(24, size - inner_pad * 2)
+        cache_key = (link, render_size, foreground, background)
+        if self.qr_cache_key != cache_key or self.qr_photo is None:
             qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
             qr.add_data(link)
             qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-            img = img.resize((size - inner_pad * 2, size - inner_pad * 2))
+            img = qr.make_image(fill_color=foreground, back_color=background).convert("RGB")
+            resampling = getattr(getattr(Image, "Resampling", Image), "NEAREST")
+            img = img.resize((render_size, render_size), resampling)
             self.qr_photo = ImageTk.PhotoImage(img)
-            self.qr_cache_link = link
+            self.qr_cache_key = cache_key
         canvas.create_image(x + inner_pad, y + inner_pad, anchor="nw", image=self.qr_photo)
 
     def draw_row(self, canvas: tk.Canvas, label_id: str, value: str, accent: str, value_x: int, line_end: int) -> None:
@@ -4098,15 +5337,109 @@ class PerspectiveConsoleApp:
         if slant == "italic":
             styles.append("italic")
         canvas.create_text(x, y, anchor="w", text=render_value, fill=color, font=(family, size, *styles))
-        canvas.create_line(x, y + 15, max(x + 10, line_end), y + 15, fill=str((row or {}).get("line_color", "#1b2f2b")))
+        canvas.create_line(x, y + 15, max(x + 10, line_end), y + 15, fill=normalize_hex_color(str((row or {}).get("line_color", self.theme_color("top_row_line"))), self.theme_color("top_row_line")))
         canvas.create_rectangle(x - 8, y - 14, x - 4, y + 17, fill=bar_color, outline="")
 
-    def draw_boxed_text(self, canvas: tk.Canvas, x: int, y: int, label_id: str, value: str, width: int, height: int, accent: str, max_lines: int = 2) -> None:
+    def draw_boxed_text(self, canvas: tk.Canvas, x: int, y: int, label_id: str, value: str, width: int, height: int, accent: str, max_lines: int = 2, wrap_width: int | None = None) -> None:
         self.draw_display_text(canvas, label_id)
-        canvas.create_rectangle(x, y, x + width, y + height, fill="#111920", outline="#203037")
+        canvas.create_rectangle(x, y, x + width, y + height, fill=self.theme_color("box_background"), outline=self.theme_color("box_border"))
         canvas.create_rectangle(x, y, x + 4, y + height, fill=accent, outline="")
-        wrapped = self.wrap_text_pixels(value, ("TkDefaultFont", 12), max_width=width - 26, max_lines=max_lines)
-        canvas.create_text(x + 14, y + 11, anchor="nw", text=wrapped, fill="#f1fff9", font=("TkDefaultFont", 12))
+        region_limit = max(BOX_WRAP_MIN, (x + width - BOXED_CONTENT_TEXT_RIGHT_PAD) - (x + BOXED_CONTENT_TEXT_LEFT_PAD))
+        requested_wrap = region_limit if wrap_width is None else int(wrap_width)
+        effective_wrap = max(BOX_WRAP_MIN, min(region_limit, requested_wrap))
+
+        # Use the Canvas text engine for both measurement and final wrapping.
+        # The prior implementation measured with tkfont.Font and then rendered a
+        # separately-created Canvas font. On some Linux font/DPI combinations
+        # those two paths disagree, causing an 858px setting to wrap near the old
+        # visual limit. Canvas-native probing guarantees the visible line uses
+        # the real boxed-region width on the current display.
+        wrapped = self.wrap_text_for_canvas(
+            canvas,
+            value,
+            ("TkDefaultFont", 12),
+            max_width=effective_wrap,
+            max_lines=max_lines,
+        )
+        canvas.create_text(
+            x + BOXED_CONTENT_TEXT_LEFT_PAD,
+            y + 11,
+            anchor="nw",
+            text=wrapped,
+            fill=self.theme_color("box_text"),
+            font=("TkDefaultFont", 12),
+            width=effective_wrap,
+            justify="left",
+        )
+
+    def wrap_text_for_canvas(self, canvas: tk.Canvas, text: str, font_spec, max_width: int, max_lines: int = 2) -> str:
+        """Return text clipped to max_lines using the Canvas's actual font layout.
+
+        Canvas and tkfont can resolve named/default fonts differently depending
+        on DPI, desktop scaling, and Linux font substitution. Temporary offscreen
+        Canvas items make the measurement path identical to final rendering.
+        """
+        normalized = " ".join((text or "").replace("\n", " ").split())
+        if not normalized:
+            return ""
+
+        max_width = max(BOX_WRAP_MIN, int(max_width))
+        max_lines = max(1, int(max_lines))
+        cache = getattr(self, "_boxed_canvas_wrap_cache", None)
+        if cache is None:
+            cache = {}
+            self._boxed_canvas_wrap_cache = cache
+        try:
+            scaling = round(float(self.root.tk.call("tk", "scaling")), 4)
+        except Exception:
+            scaling = 0.0
+        cache_key = (normalized, tuple(font_spec), max_width, max_lines, scaling)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        probe_x = -10000
+        probe_y = -10000
+
+        def item_height(candidate: str) -> int:
+            item = canvas.create_text(
+                probe_x,
+                probe_y,
+                anchor="nw",
+                text=candidate,
+                font=font_spec,
+                width=max_width,
+                justify="left",
+            )
+            bbox = canvas.bbox(item)
+            canvas.delete(item)
+            return 0 if not bbox else int(bbox[3] - bbox[1])
+
+        line_probe = "\n".join(["Ag"] * max_lines)
+        allowed_height = item_height(line_probe)
+        if item_height(normalized) <= allowed_height:
+            cache[cache_key] = normalized
+            return normalized
+
+        words = normalized.split()
+        lo, hi = 0, len(words)
+        best = "..."
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            prefix = " ".join(words[:mid]).rstrip()
+            candidate = (prefix + "...") if prefix else "..."
+            if item_height(candidate) <= allowed_height:
+                best = candidate
+                lo = mid + 1
+            else:
+                hi = mid - 1
+
+        cache[cache_key] = best
+        # Bound the cache because redraws may see many temporary editor values.
+        if len(cache) > 256:
+            for old_key in list(cache)[:64]:
+                cache.pop(old_key, None)
+        return best
 
     def wrap_text_pixels(self, text: str, font_spec, max_width: int, max_lines: int = 2) -> str:
         text = (text or "").replace("\n", " ").strip()
@@ -4194,7 +5527,7 @@ class PerspectiveConsoleApp:
         c = self.output_canvas
         accent = self.scanner_color_var.get().strip() or "#00ff99"
         c.create_rectangle(42, self.scan_y, OUTPUT_WIDTH - 42, self.scan_y + 3, fill=accent, outline="")
-        c.create_rectangle(42, self.scan_y + 4, OUTPUT_WIDTH - 42, self.scan_y + 15, fill="#17362b", outline="", stipple="gray50")
+        c.create_rectangle(42, self.scan_y + 4, OUTPUT_WIDTH - 42, self.scan_y + 15, fill=self.theme_color("scan_trail"), outline="", stipple="gray50")
         self.draw_display_text(c, "scan_label")
         self.scan_y += 8
         if self.scan_y > OUTPUT_HEIGHT - 34:
@@ -4461,6 +5794,7 @@ class PerspectiveConsoleApp:
         self.apply_editor_to_card_without_reschedule()
         self.apply_display_text_editor_without_reschedule()
         self.apply_top_row_option_without_reschedule()
+        self.apply_qr_group_without_reschedule()
         self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         self.store.save("manual-save")
@@ -4474,6 +5808,7 @@ class PerspectiveConsoleApp:
         self.apply_editor_to_card_without_reschedule()
         self.apply_display_text_editor_without_reschedule()
         self.apply_top_row_option_without_reschedule()
+        self.apply_qr_group_without_reschedule()
         self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         self.store.save_as(Path(path))
@@ -4495,7 +5830,7 @@ class PerspectiveConsoleApp:
         self.scanner_color_var.set(self.store.data["under_header"].get("scanner_color", "#00ff99"))
         self.speed_scale.set(self.scan_speed_var.get())
         self.speed_label.configure(text=f"{self.scan_speed_var.get()} ms")
-        self.qr_cache_link = None
+        self.qr_cache_key = None
         self.qr_photo = None
         self.base_image_cache = {}
         self.rendered_image_cache = {}
@@ -4514,7 +5849,7 @@ class PerspectiveConsoleApp:
         self.resource_profile_var.set("low")
         self.scan_speed_var.set(RESOURCE_PROFILES["low"]["scan_ms"])
         self.scanner_color_var.set("#00ff99")
-        self.qr_cache_link = None
+        self.qr_cache_key = None
         self.qr_photo = None
         self.base_image_cache = {}
         self.rendered_image_cache = {}
@@ -4610,6 +5945,7 @@ class PerspectiveConsoleApp:
         self.apply_editor_to_card_without_reschedule()
         self.apply_display_text_editor_without_reschedule()
         self.apply_top_row_option_without_reschedule()
+        self.apply_qr_group_without_reschedule()
         self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         self.store.save("export-current-card")
@@ -4645,6 +5981,7 @@ class PerspectiveConsoleApp:
         self.apply_editor_to_card_without_reschedule()
         self.apply_display_text_editor_without_reschedule()
         self.apply_top_row_option_without_reschedule()
+        self.apply_qr_group_without_reschedule()
         self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         self.store.save("export-all-cards")
@@ -4701,6 +6038,7 @@ class PerspectiveConsoleApp:
         self.apply_editor_to_card_without_reschedule()
         self.apply_display_text_editor_without_reschedule()
         self.apply_top_row_option_without_reschedule()
+        self.apply_qr_group_without_reschedule()
         self.refresh_top_dropdown_values()
         self.remember_window_geometry()
         # Clear temporary duplicate archive before the windows close.
