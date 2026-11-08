@@ -1,618 +1,136 @@
+<div align="center">
+
 # 🃏 Deck Card Widget
+### Your stream. Your cards. Two presentation modes. One live controller.
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![GUI](https://img.shields.io/badge/GUI-Tkinter-2ea44f)
-![OBS](https://img.shields.io/badge/OBS-Window%20Capture-purple)
-![No Electron](https://img.shields.io/badge/No-Electron-lightgrey)
-![No Pygame](https://img.shields.io/badge/No-Pygame-lightgrey)
-![Status](https://img.shields.io/badge/Status-Display%20Edit%20Build-brightgreen)
+**A local-first Python/Tkinter overlay toolkit for OBS and the DigiMancer streamer ecosystem.**
 
-**Deck Card Widget** is a low-resource desktop overlay controller for streamers, educators, presenters, analysts, and creators who want reusable on-screen “deck cards” without needing a browser source, Electron app, or game engine.
+[![Python](https://img.shields.io/badge/Python-3-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![Interface](https://img.shields.io/badge/GUI-Tkinter-166534)](#requirements) [![Release](https://img.shields.io/badge/Release-Alpha-F59E0B)](#release-status) [![Storage](https://img.shields.io/badge/Storage-Local--first-0F766E)](#data-formats-and-privacy) [![OBS](https://img.shields.io/badge/OBS-Window%20Capture-55358A)](#live-studio-workflow)
 
-It uses a private **controller window** and a separate OBS-friendly **output window**. The controller edits cards, emoji stickers, PNG layers, custom text layers, and built-in display labels. The output window is the clean visual surface meant to be captured by OBS.
+**[Quick start](#quick-start) · [Features](#features) · [Dual-side editor](#full-data--qr-data) · [Studio integrations](#live-studio-workflow) · [Safety](#data-formats-and-privacy)**
 
-> Built for simple desktop control, fast iteration, and personalized visual cards.
+</div>
 
 ---
 
-## ✨ Highlights
+## What is Deck Card Widget?
 
-- 🖥️ **Separate controller + output windows**
-- 🎥 **OBS Window Capture friendly** output
-- 🃏 **Deck card buttons** with overflow card storage
-- ✏️ **Display Edit tab** for changing built-in output labels
-- 😀 **Personal emoji preset file** using a simple `.emoji` format
-- 🖼️ **PNG image layers** for logos, icons, and custom graphics
-- 🔤 **Custom text layers** for card-specific messages
-- 💾 **`.buttstore` persistence** for app state, cards, display settings, and layout
-- 📦 **`.deckbutt` card export/import** for reusable individual cards
-- ⚡ **Low-resource design** using Python + Tkinter
-- 🚫 No Electron, no browser overlay requirement, no pygame
+Deck Card Widget (**DCW**) is a low-resource desktop controller for building and displaying stream-ready cards: partnerships, sponsors, information, URLs, QR codes, reactions, and other on-screen elements. Each card can combine editable text with PNG, emoji, and text layers. The output window is designed for capture in OBS while the controller stays available behind the scenes.
+
+DCW offers **two separately editable visual sides** to the same card, **Full-Data** and **QR-Data**, plus a live mode switch that can be driven either from DCW or by DMS Live Switcher. A card keeps its underlying information regardless of its current visual presentation.
+
+> [!IMPORTANT]
+> **Alpha software.** Save backups of existing `.buttstore` collections before testing the dual-side editor. Older DCW releases may ignore and overwrite the newer `data_sides` metadata when saving.
+
+## Features
+
+| Area | Capabilities |
+|:--|:--|
+| Cards | Reusable deck-card buttons, saved collections, active card switching and output visibility |
+| Content | Source type, confidence, verdict, source link and multiple boxed text areas |
+| Layers | PNG images, emoji stickers and text elements; positioning and visibility controls |
+| Full-Data | Text-forward card layout for reading and discussion |
+| QR-Data | Large QR/fallback area, deck information panel, logo and sponsor space |
+| Live control | `QR-Data Live` ON/OFF in the controller; DMS can request and confirm the same global mode |
+| Export | Card image export and saved `.buttstore` collections; standalone card workflows may use `.deckbutt` |
+| Local studio | Works as an independent OBS overlay or as part of SBC ↔ DMS ↔ FGF |
+
+## Full-Data & QR-Data
+
+### Two sides, one card
+
+Each saved card has its own preferred display mode. The **QR-Data Live** button changes the active editing/output view without deleting the saved preference. Cards explicitly pinned to QR-Data retain their saved behavior in the normal DMS flow.
+
+For PNG, emoji, and text objects, the dual-side editor can store:
+
+- **Different positions** in Full-Data and QR-Data, starting from the same inherited coordinates on older cards.
+- **Different visibility** on each side; hiding on one side does not automatically hide the other.
+- Mutually exclusive **Full-Data ONLY** and **QR-Data ONLY** options. With neither selected, an object may appear on either side.
+- **Side-aware deletion:** keep a shared object on the other side or delete it from both sides after confirmation.
+
+### QR-Data layout editor
+
+Shared QR geometry lets a collection use a consistent QR-Data composition. Controls cover the outer frame, QR/fallback rectangle, logo zone, title/data lanes, upper-right deck information, lower-right sponsor zone and related text boundaries.
+
+If a QR link is unavailable, the saved fallback choice can show an empty QR region or selected text content. The text renderer fits centered fallback copy into the QR area (including the large-text edge case tested at 860 characters). Right-side QR link information displays without a `QR LOC:` prefix and clips extra characters silently. The upper-left data lanes retain their own ellipsis behavior.
+
+## Quick start
+
+### Requirements
+
+- Python 3 and Tkinter; install optional image/QR dependencies listed by the repository's current requirements or setup instructions.
+- A desktop environment capable of opening native Tk windows. OBS is optional unless you're capturing the output in a live scene.
+- A writable local directory for saved collections and artwork.
+
+```bash
+# From a downloaded or cloned Deck-Card-Widget repository
+python3 3dcp_perspective_console.py
+```
+
+If your checkout includes a `requirements.txt`, follow its instructions before launching. On Linux, install the distribution's Tk package when `import tkinter` is unavailable. The controller and output window are separate, capture the **output window**, not the editor.
+
+### First card test
+
+1. Open a card and confirm its saved text fields and source link.
+2. Add a PNG or emoji and save a **copy** of the `.buttstore` collection.
+3. Toggle `QR-Data Live`, reposition the object on QR-Data, and switch back to confirm Full-Data retained its position.
+4. Apply **QR-Data ONLY** to one test object, then confirm it does not appear on Full-Data.
+5. Reload your saved copy and test both sides again before using it on stream.
+
+## Live studio workflow
+
+```mermaid
+flowchart LR
+  FGF[FGF Broadcaster] -->|Page/source/block cue| DMS[DMS Live Switcher]
+  DMS -->|Validated card selection and QR mode| DCW[Deck Card Widget]
+  DCW -->|Output window| OBS[OBS Window Capture]
+  SBC[Streamer Board & Console] -->|Launch and manage| DCW
+```
+
+- **[DMS Live Switcher](https://github.com/DigiMancer3D/DMS-Live-Switcher)** provides `Change Display: FULL-DATA / QR-DATA` and reports OFFLINE when DCW isn't running.
+- **[Field Guide Forge](https://github.com/DigiMancer3D/Field-Guide-Forge)** can map presenter pages, sources or blocks to card IDs and request mode changes *through DMS*.
+- **[Streamer Board & Console](https://github.com/DigiMancer3D/Streamer-Board-Console)** launches compatible apps and manages pinboard-related studio outputs.
+- **[DMST](https://github.com/DigiMancer3D/DMST)** is the parent index for this tool family.
+
+Only local studio actions you explicitly configure are automated. Deck Card Widget is usable without DMS, FGF or SBC.
+
+## Data formats and privacy
+
+| File | Purpose | Public repository? |
+|:--|:--|:--|
+| `.buttstore` | Saved collection of cards and layout metadata | **No** for real show data; sanitized demo only |
+| `.deckbutt` | Reusable individual card, where supported | Sanitized examples only |
+| `3dcp_perspective_console.py` | Main controller/source | Yes |
+| `dcw_dualside.py` | Dual-side layer logic | Yes |
+| `dms_qr_display_deck.py` | DMS integration, if installed | Yes, after reviewing for secrets |
+| Personal PNGs/emoji libraries | Creative assets, paths and episode data | Only with appropriate permission |
+
+Do **not** commit private `.buttstore` collections, source URLs intended to remain private, pairing tokens, `user_data/`, dated `.bak` files or `.pre-*` backups. Keep real episode content and machine-specific paths out of examples.
+
+## Troubleshooting
+
+<details><summary><strong>DMS says OFFLINE</strong></summary>
+
+Start DCW first and confirm its output/controller process is running. Restart DMS to refresh the connection; use both applications' current bridge modules.
+
+</details>
+
+<details><summary><strong>The QR toggle appears to ignore an individually configured QR card</strong></summary>
+
+Saved per-card QR preferences and the global live override are distinct. Test the same switch using a normal Full-Data card, then verify the saved card preference.
+
+</details>
+
+<details><summary><strong>A PNG moves on both sides</strong></summary>
+
+Check that your checkout includes the dual-side module and that the installed controller actually loads it. Save and reload a *copy* of the collection before making further edits.
+
+</details>
 
 ---
 
-## 🧠 What This Project Does
+## Project & credits
 
-Deck Card Widget lets a creator prepare multiple “cards” and switch between them during a stream, recording, lesson, presentation, or live discussion.
+Built by **[DigiMancer3D](https://github.com/DigiMancer3D)** for the [DigiMancer Streamer Tools](https://github.com/DigiMancer3D/DMST) ecosystem, including [3D Changes Perspectives](https://github.com/DigiMancer3D/3DChangesPerspectives).
 
-Each card can contain:
-
-- source or link information
-- confidence/status fields
-- claim/evidence/question text
-- emoji stickers
-- imported PNG images
-- custom text layers
-- editable built-in display labels
-
-The output window can stay clean and stable while the controller window remains private.
-
----
-
-## 🪟 Output Window
-
-The output window has a stable title for OBS:
-
-```text
-Deck Card Widget - Output
-```
-
-Recommended OBS setup:
-
-1. Launch Deck Card Widget.
-2. Confirm the output window is visible.
-3. In OBS, add **Window Capture**.
-4. Select:
-
-```text
-Deck Card Widget - Output
-```
-
-5. Resize/crop in OBS as needed.
-
-The default output canvas is designed around:
-
-```text
-960 x 500
-```
-
----
-
-## 📁 Project Layout
-
-Typical standalone folder:
-
-```text
-Deck_Card_Widget/
-  3dcp_perspective_console.py
-  requirements.txt
-  launch_deck_card_widget_venv.sh
-  launch_3dcp_console_venv.sh
-  setup_venv_3dcp_console.sh
-  doctor_deck_card_widget.sh
-  acceptance_deck_card_widget.sh
-  data/
-    emoji_presets/
-      default_presets.emoji
-    templates/
-      default_episode_template.buttstore
-  docs/
-  user_data/                  # created at runtime
-```
-
-The app stores user/runtime files outside the main code path when possible:
-
-```text
-user_data/
-  buttstores/
-  deckbutts/
-  exports/
-  imported_pngs/
-  runtime/
-  current.emoji
-  .venv/
-```
-
-Do not delete `user_data/` unless the goal is to reset local cards, presets, runtime state, and exports.
-
----
-
-## ✅ Requirements
-
-Minimum practical requirements:
-
-- Python 3.10 or newer
-- Tkinter / Tcl-Tk support
-- pip
-- a desktop session capable of showing GUI windows
-- Pillow
-- qrcode
-
-Python package requirements are listed in:
-
-```text
-requirements.txt
-```
-
-Current pip requirements:
-
-```text
-qrcode[pil]>=7.4.2
-Pillow>=10.0.0
-```
-
----
-
-## 🚀 Quick Start: Kubuntu / Ubuntu / Debian
-
-This project was designed and tested around a Kubuntu 24 desktop workflow using X11/Wayland-aware window recovery.
-
-Install system pieces:
-
-```bash
-sudo apt update
-sudo apt install python3 python3-venv python3-tk python3-full
-```
-
-From the project folder:
-
-```bash
-chmod +x *.sh
-./setup_venv_3dcp_console.sh
-./launch_deck_card_widget_venv.sh
-```
-
-Optional checks:
-
-```bash
-./doctor_deck_card_widget.sh
-./acceptance_deck_card_widget.sh
-```
-
-Compatibility launcher:
-
-```bash
-./launch_3dcp_console_venv.sh
-```
-
----
-
-## 🐧 Arch Linux Setup
-
-Install Python and Tk support:
-
-```bash
-sudo pacman -Syu python tk
-```
-
-Then run the included setup script:
-
-```bash
-chmod +x *.sh
-./setup_venv_3dcp_console.sh
-./launch_deck_card_widget_venv.sh
-```
-
-Manual fallback:
-
-```bash
-python -m venv user_data/.venv
-source user_data/.venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python 3dcp_perspective_console.py
-```
-
-Tkinter test:
-
-```bash
-python -m tkinter
-```
-
-A small Tk test window should appear.
-
----
-
-## 🍎 macOS Setup
-
-Recommended: install Python from the official Python.org macOS installer, because it normally includes working Tkinter support.
-
-Verify Tkinter:
-
-```bash
-python3 -m tkinter
-```
-
-Create a local virtual environment:
-
-```bash
-python3 -m venv user_data/.venv
-source user_data/.venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python 3dcp_perspective_console.py
-```
-
-The included `.sh` launchers may also work from Terminal after permissions are set:
-
-```bash
-chmod +x *.sh
-./setup_venv_3dcp_console.sh
-./launch_deck_card_widget_venv.sh
-```
-
-If Tkinter fails on a Homebrew-based Python install, use the Python.org installer or install the matching Tk/Tcl support for that Python version.
-
----
-
-## 🪟 Windows Setup
-
-The included shell scripts are designed for Linux/macOS-style terminals. On Windows, use PowerShell or Windows Terminal with Python installed.
-
-Verify Tkinter:
-
-```powershell
-py -m tkinter
-```
-
-Create and activate a local virtual environment:
-
-```powershell
-py -m venv user_data\.venv
-.\user_data\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python .\3dcp_perspective_console.py
-```
-
-If PowerShell blocks activation for the current terminal session:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\user_data\.venv\Scripts\Activate.ps1
-```
-
-Windows users can also run the app through Git Bash or WSL, but native PowerShell is usually simpler for a normal desktop launch.
-
----
-
-## 🎛️ Basic Use
-
-1. Launch the app.
-2. Use the private controller window to edit the active card.
-3. Use the sidebar deck buttons to switch between the first six cards.
-4. Use **Deck Card Storage** for extra cards.
-5. Capture the output window in OBS.
-6. Save/export cards as needed.
-
-Common card tools:
-
-- **Add Source**: create a normal editable card
-- **Add Blank**: create a blank/hide card
-- **Duplicate Card**: copy the active card
-- **Delete Card**: remove the active card
-- **Save Card**: export one reusable `.deckbutt`
-- **Load Card**: import a `.deckbutt`
-- **Export Card PNG**: save the current visual card as PNG
-- **Export All PNGs**: export every card
-
----
-
-## ✏️ Display Edit Tab
-
-The **Display Edit** tab controls built-in output labels that were previously hard-coded into the display renderer.
-
-Use it to change public-facing text such as:
-
-- top title
-- status label
-- card type label
-- confidence label
-- QR label
-- brand/subtitle labels
-- claim/evidence/question section labels
-- scan animation label
-
-Display Edit supports:
-
-- text editing
-- text color
-- optional border
-- border color
-- font selection
-- default text reset
-- default color reset
-- default font reset
-- show/hide
-- X/Y movement
-- nudge buttons
-- snap/move buttons
-- **Apply Now** for immediate refresh
-
-Display settings are stored in the active `.buttstore` under:
-
-```json
-header.display_text
-```
-
-Older `.buttstore` files are upgraded when loaded by adding the missing `header.display_text` section without deleting existing cards or layers.
-
----
-
-## 😀 Personalized Emoji Presets
-
-Deck Card Widget supports a simple `.emoji` text format so users can personalize the emoji picker.
-
-Default packaged file:
-
-```text
-data/emoji_presets/default_presets.emoji
-```
-
-Optional user override file:
-
-```text
-user_data/current.emoji
-```
-
-When `user_data/current.emoji` exists, the app loads it first. If it does not exist, the packaged default preset file is used.
-
-### Create a personal emoji file
-
-From the project folder:
-
-```bash
-mkdir -p user_data
-cp data/emoji_presets/default_presets.emoji user_data/current.emoji
-```
-
-On Windows PowerShell:
-
-```powershell
-New-Item -ItemType Directory -Force user_data
-Copy-Item data\emoji_presets\default_presets.emoji user_data\current.emoji
-```
-
-Then edit:
-
-```text
-user_data/current.emoji
-```
-
-### `.emoji` record format
-
-Each emoji record uses:
-
-```text
-emoji|name|category /,
-```
-
-Examples:
-
-```text
-✅|Confirmed|Status /,
-❌|Rejected|Status /,
-🧪|Experiment|Lab /,
-🎬|Scene|Streaming /,
-📌|Pinned Point|Notes /,
-```
-
-Minimal emoji-only records also work:
-
-```text
-🔥 /,
-👀 /,
-💡 /,
-```
-
-Names and categories are filled with defaults when omitted.
-
-### Emoji editing tips
-
-- Save the file as UTF-8.
-- Keep the record separator `/,` after each entry.
-- Use short names for cleaner picker display.
-- Group related emoji with the same category name.
-- Restart the app after changing `current.emoji` so presets reload cleanly.
-
----
-
-## 💾 Storage Formats
-
-### `.buttstore`
-
-A `.buttstore` stores the full app session state:
-
-- deck cards
-- active card
-- output/controller geometry
-- display text settings
-- layer data
-- runtime metadata
-
-### `.deckbutt`
-
-A `.deckbutt` stores one reusable deck card.
-
-Useful for:
-
-- reusable stream cards
-- card templates
-- sharing card layouts
-- keeping a personal card library
-
-### `.emoji`
-
-A `.emoji` file stores emoji presets for the emoji sticker picker.
-
----
-
-## 🔥 Hotkeys
-
-Hotkeys work when the controller has focus and are ignored while typing in text fields.
-
-```text
-Ctrl+1 ... Ctrl+6    Select deck cards
-Ctrl+B               Blank / Hide
-Ctrl+O               Show output
-Ctrl+Shift+O         Hide output
-Ctrl+R               Scan Once
-Ctrl+L               Toggle Scan Loop
-Ctrl+S               Save + Apply
-Ctrl+E               Export Card PNG
-Ctrl+Alt+R           Rescue Output Window
-Ctrl+Alt+O           Toggle OBS mode
-```
-
----
-
-## 🧪 Testing
-
-Linux/macOS:
-
-```bash
-./acceptance_deck_card_widget.sh
-```
-
-Manual Python compile check:
-
-```bash
-python3 -m py_compile 3dcp_perspective_console.py
-```
-
-Windows PowerShell:
-
-```powershell
-python -m py_compile .\3dcp_perspective_console.py
-```
-
-Tkinter check:
-
-```bash
-python -m tkinter
-```
-
-A small test window should appear if Tkinter is working.
-
----
-
-## 🔄 Updating
-
-Recommended update flow:
-
-1. Close Deck Card Widget.
-2. Back up `user_data/`.
-3. Replace the app folder with the new version.
-4. Restore or keep `user_data/` beside the app folder.
-5. Run setup again:
-
-```bash
-./setup_venv_3dcp_console.sh
-```
-
-6. Launch:
-
-```bash
-./launch_deck_card_widget_venv.sh
-```
-
-For Windows manual installs, re-run:
-
-```powershell
-.\user_data\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python .\3dcp_perspective_console.py
-```
-
-Existing `.buttstore` files should remain usable. New storage sections are added on load when needed.
-
----
-
-## 🛟 Troubleshooting
-
-### Output window is missing
-
-Use the **Output Tools** tab:
-
-1. Press **Rescue Output Window**.
-2. Press **Reset Output Window** if needed.
-3. Re-select the output window in OBS if OBS keeps an old target.
-
-Hotkey:
-
-```text
-Ctrl+Alt+R
-```
-
-### OBS cannot see the output window
-
-Confirm the output window title:
-
-```text
-Deck Card Widget - Output
-```
-
-Then refresh or recreate the OBS Window Capture source.
-
-### Tkinter is missing
-
-Run:
-
-```bash
-python -m tkinter
-```
-
-If no test window opens, install or repair Tkinter/Tcl-Tk for the active Python installation.
-
-Linux users usually need a system package such as `python3-tk` or `tk`.
-
-### QR/Pillow dependencies are missing
-
-Run the setup script again:
-
-```bash
-./setup_venv_3dcp_console.sh
-```
-
-Manual fallback:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-### Wayland / KDE / KWin note
-
-Some Linux desktop environments handle borderless or always-on-top windows differently. The app starts in normal framed mode for safer recovery. Enable OBS/borderless mode only after confirming the output window is visible.
-
----
-
-## 🧭 History
-
-Deck Card Widget is a standalone public project evolved from the original **3DCP Perspective Console** concept and implementation approach.
-
-Original project:
-
-https://github.com/DigiMancer3D/3DChangesPerspectives/tree/main/PerspectiveConsole
-
-This standalone version focuses on reusable deck-card overlays, public-facing display labels, emoji customization, OBS capture, and storage-backed editing.
-
----
-
-## 🤝 Suggested Use Cases
-
-- livestream discussion cards
-- VTuber or PNGTuber overlay panels
-- lesson/presentation cards
-- claim/evidence/source review overlays
-- podcast visual prompts
-- stream segment cards
-- reusable branded information cards
-- OBS-friendly local overlays
-
----
-
-## 📌 Notes
-
-Deck Card Widget is meant to be easy to run, easy to customize, and easy to capture. It keeps the moving parts simple: one Python app, local files, a desktop GUI, and an OBS-visible output window.
-
-###### AI written Readme
+**License:** See this repository's `LICENSE` file, if provided. No license is implied by this README alone.
