@@ -31,7 +31,7 @@ except Exception:
 
 APP_NAME = "Deck Card Widget"
 THEME_NAME = "Deck Card Widget Lab"
-APP_VERSION = "1.3.4-de1"
+APP_VERSION = "1.3.6-dualside-alpha.1"
 BUTTSTORE_FORMAT = "3DCP-BUTTSTORE"
 BUTTSTORE_ABI = "3dcp.perspective_console.buttstore.v0"
 
@@ -152,6 +152,27 @@ DECK_BORDER_STYLES = {
     "OBS": {"color": "#ff00ff", "label": "OBS"},
 }
 DECK_BORDER_WIDTH = 5
+
+# The card model remains source-analyzer/blank; display_mode changes only the
+# visual projection and never deletes hidden boxed fields or saved layers.
+DISPLAY_MODES = ("full-data", "qr-data")
+QR_EMPTY_BEHAVIORS = ("blank", "claim", "evidence", "openQuestion")
+QR_DATA_LAYOUT = {
+    "three_rows": (52, 86, 314, 207),
+    "logo": (52, 229, 302, 464),
+    "qr": (345, 92, 360),
+    # The upper-right area always shows deck-card status and link details.
+    # Keep the sponsor/advertisement QR bay exactly 219px tall, anchored down.
+    "info": (732, 92, 913, 229),
+    "sponsor": (732, 245, 913, 464),
+}
+
+def normalize_display_mode(value):
+    return value if value in DISPLAY_MODES else "full-data"
+
+def normalize_qr_empty_behavior(value):
+    return value if value in QR_EMPTY_BEHAVIORS else "blank"
+
 
 QR_GROUP_DEFAULTS = {
     # Top-left of the QR square. These values reproduce the pre-v1.2 layout.
@@ -359,7 +380,7 @@ def blend_hex_colors(fg_hex: str, bg_hex: str, opacity: float) -> str:
 
 def new_card(card_type: str = "source_analyzer", label: str = "Widget Card") -> dict:
     if card_type == "blank":
-        return {"id": "blank-hide", "label": "Blank / Hide", "type": "blank", "fields": {}, "layers": [], "deck_border_type": "", "box_wrap_widths": copy.deepcopy(BOX_WRAP_DEFAULTS), "box_wrap_model": BOX_WRAP_MODEL}
+        return {"id": "blank-hide", "label": "Blank / Hide", "type": "blank", "fields": {}, "layers": [], "deck_border_type": "", "box_wrap_widths": copy.deepcopy(BOX_WRAP_DEFAULTS), "box_wrap_model": BOX_WRAP_MODEL, "display_mode": "full-data", "qr_empty_behavior": "blank"}
     return {
         "id": "source-analyzer",
         "label": label,
@@ -367,6 +388,8 @@ def new_card(card_type: str = "source_analyzer", label: str = "Widget Card") -> 
         "deck_border_type": "",
         "box_wrap_widths": copy.deepcopy(BOX_WRAP_DEFAULTS),
         "box_wrap_model": BOX_WRAP_MODEL,
+        "display_mode": "full-data",
+        "qr_empty_behavior": "blank",
         "fields": {
             "sourceType": "Primary",
             "confidence": "Medium",
@@ -1244,6 +1267,8 @@ class ButtStore:
             card.setdefault("layers", [])
             card["deck_border_type"] = normalize_deck_border_type(card.get("deck_border_type", ""))
             ensure_box_wrap_storage(card)
+            card["display_mode"] = normalize_display_mode(card.get("display_mode"))
+            card["qr_empty_behavior"] = normalize_qr_empty_behavior(card.get("qr_empty_behavior"))
             if card.get("type") == "source_analyzer":
                 fields.setdefault("sourceType", "Unknown")
                 fields.setdefault("confidence", "Still Checking")
@@ -1397,6 +1422,11 @@ class PerspectiveConsoleApp:
         self.source_link_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Ready")
         self.card_label_var = tk.StringVar(value="Widget Card")
+        self.display_mode_var = tk.StringVar(value="full-data")
+        self.qr_empty_behavior_var = tk.StringVar(value="blank")
+        # Session-only QR broadcast toggle; does NOT change saved per-card modes.
+        # A card saved in QR mode ALWAYS stays QR, even while global live QR is off.
+        self.live_qr_data_var = tk.BooleanVar(value=False)
         self.claim_wrap_var = tk.IntVar(value=BOX_WRAP_DEFAULTS["claim"])
         self.evidence_wrap_var = tk.IntVar(value=BOX_WRAP_DEFAULTS["evidence"])
         self.question_wrap_var = tk.IntVar(value=BOX_WRAP_DEFAULTS["openQuestion"])
@@ -1550,7 +1580,15 @@ class PerspectiveConsoleApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.bind_controller_hotkeys()
         # Archive duplicate-looking buttstores after the UI is ready so the user can review them during the session.
+        # DMS FGF QR bridge alpha.1 (live display only; no per-card edits).
+        try:
+            from dms_qr_display_deck import attach as attach_dms_qr_display
+            attach_dms_qr_display(self)
+        except Exception as exc:
+            self.status_var.set(f"DMS QR-data bridge unavailable: {exc}")
         self.root.after(1200, self.archive_duplicate_buttstores_after_load)
+        from dms_live_deck_bridge import attach as _dms_attach  # DMS_LIVE_SWITCHER_V1
+        _dms_attach(self, RUNTIME_DIR)
 
     def hotkey_should_run(self) -> bool:
         if not self.hotkeys_enabled_var.get():
@@ -1638,6 +1676,9 @@ class PerspectiveConsoleApp:
         ttk.Button(left, text="Show Output", command=self.show_output).pack(fill="x", pady=2)
         ttk.Button(left, text="Hide Output", command=self.hide_output).pack(fill="x", pady=2)
         ttk.Checkbutton(left, text="Output visible on restart", variable=self.output_visible_var, command=self.on_setting_changed).pack(anchor="w", pady=(6, 2))
+        # Deliberately by the live output controls, not near Scanner/PNG export.
+        self.live_qr_data_button = ttk.Button(left, text="QR-Data Live: OFF", command=self.toggle_live_qr_data)
+        self.live_qr_data_button.pack(fill="x", pady=(4, 2))
         ttk.Separator(left).pack(fill="x", pady=10)
         ttk.Button(left, text="Scan Once", command=self.scan_once).pack(fill="x", pady=2)
         ttk.Checkbutton(left, text="Scan Loop", variable=self.scan_loop_var, command=self.toggle_scan_loop).pack(anchor="w", pady=(6, 2))
@@ -1714,7 +1755,8 @@ class PerspectiveConsoleApp:
         hotkeys_frame = ttk.Frame(layer_notebook, padding=8)
         display_edit_frame = ttk.Frame(layer_notebook, padding=8)
         top_rows_frame = ttk.Frame(layer_notebook, padding=8)
-        qr_group_frame = ttk.Frame(layer_notebook, padding=8)
+        qr_group_outer = ttk.Frame(layer_notebook)
+        qr_group_frame = ttk.Frame(qr_group_outer, padding=8)
         colors_frame = ttk.Frame(layer_notebook, padding=8)
         layer_notebook.add(deck_frame, text="Deck Cards")
         layer_notebook.add(sticker_frame, text="Emoji Stickers")
@@ -1724,7 +1766,8 @@ class PerspectiveConsoleApp:
         layer_notebook.add(hotkeys_frame, text="Hotkeys")
         layer_notebook.add(display_edit_frame, text="Display Edit")
         layer_notebook.add(top_rows_frame, text="Top Rows")
-        layer_notebook.add(qr_group_frame, text="QR Group")
+        layer_notebook.add(qr_group_outer, text="QR Group")
+        self.setup_qr_tab_scroll(qr_group_outer, qr_group_frame)
         layer_notebook.add(colors_frame, text="Colors")
         self.build_colors_tab(colors_frame)
 
@@ -1770,8 +1813,31 @@ class PerspectiveConsoleApp:
             ).grid(row=idx // 4, column=idx % 4, sticky="w", padx=(0, 10), pady=2)
         ttk.Button(deck_border_box, text="Clear Border", command=self.clear_deck_border).grid(row=2, column=0, columnspan=4, sticky="w", pady=(5, 0))
 
-        deck_note = ttk.Label(deck_left, text="Deck buttons on the sidebar show the first 8 cards. Extra cards stay in storage. Border choices are mutually exclusive per card.", wraplength=430)
-        deck_note.grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        view_box = ttk.LabelFrame(deck_left, text="Output View / QR Data", padding=6)
+        view_box.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        ttk.Label(view_box, text="This card").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        view_mode_selector = ttk.Combobox(
+            view_box, state="readonly", width=15, values=DISPLAY_MODES,
+            textvariable=self.display_mode_var,
+        )
+        view_mode_selector.grid(row=0, column=1, sticky="w", pady=2)
+        view_mode_selector.bind("<<ComboboxSelected>>", self.on_card_view_selection)
+        ttk.Label(view_box, text="If no QR link").grid(row=1, column=0, sticky="w", padx=(0, 6))
+        no_link_selector = ttk.Combobox(
+            view_box, state="readonly", width=15, values=QR_EMPTY_BEHAVIORS,
+            textvariable=self.qr_empty_behavior_var,
+        )
+        no_link_selector.grid(row=1, column=1, sticky="w", pady=2)
+        no_link_selector.bind("<<ComboboxSelected>>", self.on_card_view_selection)
+        ttk.Label(
+            view_box,
+            text="Saved QR cards stay QR; live toggle switches other cards. "
+                 "No-link option works on all cards. Sponsor bay: bottom-right.",
+            wraplength=410, justify="left",
+        ).grid(row=2, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+
+        deck_note = ttk.Label(deck_left, text="Sidebar: first 8 cards; extras stay in storage.", wraplength=430)
+        deck_note.grid(row=7, column=0, columnspan=3, sticky="w", pady=(5, 0))
 
         ttk.Label(deck_right, text="Deck Card Storage", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, sticky="w")
         deck_storage_frame = ttk.Frame(deck_right)
@@ -2377,6 +2443,7 @@ class PerspectiveConsoleApp:
         self.refresh_top_row_editor()
         self.load_qr_group_into_controls()
         self.refresh_top_dropdown_values()
+        self.setup_dualside_controls(sticker_left, image_frame, text_layer_frame, qr_group_frame)
 
     def theme_colors(self) -> dict:
         return ensure_theme_color_storage(self.store.data)
@@ -4031,6 +4098,70 @@ class PerspectiveConsoleApp:
         self.refresh_after_deck_change("card-deleted")
         self.status_var.set("Deleted active card")
 
+    def on_card_view_selection(self, _event=None) -> None:
+        """Apply per-card layout immediately; source fields and layers stay intact."""
+        # Bring any pending textbox edits into the card before changing its view.
+        # This is important when the user just pasted a URL then selects QR Data.
+        self.apply_editor_to_card_without_reschedule()
+        card = self.store.active_card()
+        mode = normalize_display_mode(self.display_mode_var.get())
+        fallback = normalize_qr_empty_behavior(self.qr_empty_behavior_var.get())
+        if card.get("display_mode") == mode and card.get("qr_empty_behavior") == fallback:
+            return
+        card["display_mode"] = mode
+        card["qr_empty_behavior"] = fallback
+        self.store.mark_dirty("card-qr-layout-changed")
+        self.redraw_output()
+        self.schedule_autosave()
+        self.status_var.set(f"Output view: {mode}; no-link: {fallback}")
+
+    def update_live_qr_data_button(self) -> None:
+        if hasattr(self, "live_qr_data_button"):
+            state = "ON" if self.live_qr_data_var.get() else "OFF"
+            self.live_qr_data_button.configure(text=f"QR-Data Live: {state}")
+
+    def set_live_qr_data(self, enabled: bool) -> None:
+        """Session-wide live switch for DMS/FGF; never edits per-card preferences.
+
+        A card explicitly saved as QR-data is pinned to QR-data. All other
+        nonblank cards follow this toggle. The state survives card changes but
+        intentionally resets to OFF on application launch.
+        """
+        new_state = bool(enabled)
+        # Pasted URLs/boxed-text edits must be reflected in the live result even
+        # before the regular debounce-based autosave has run.
+        self.apply_editor_to_card_without_reschedule()
+        self.live_qr_data_var.set(new_state)
+        self.update_live_qr_data_button()
+        self.redraw_output()
+        self.status_var.set(f"Live QR-data: {'ON' if new_state else 'OFF'} (saved QR cards stay QR)")
+
+    def toggle_live_qr_data(self) -> None:
+        self.set_live_qr_data(not self.live_qr_data_var.get())
+
+    def get_display_mode_status(self) -> dict:
+        """Read-only integration snapshot for an on-device DMS/FGF adapter."""
+        card = self.store.active_card()
+        return {
+            "live_qr_data": bool(self.live_qr_data_var.get()),
+            "saved_mode": normalize_display_mode(card.get("display_mode")),
+            "effective_mode": self.effective_display_mode(card),
+            "card_id": str(card.get("id", "")),
+        }
+
+    def set_output_mode_override(self, mode=None) -> None:
+        """Compatibility entry point for DMS/FGF integration.
+
+        'qr-data' turns on live QR for non-pinned cards. 'full-data', 'saved',
+        'card', or None disables live QR but NEVER forces pinned QR cards to full.
+        """
+        self.set_live_qr_data(mode == "qr-data")
+
+    def effective_display_mode(self, card: dict) -> str:
+        if normalize_display_mode(card.get("display_mode")) == "qr-data":
+            return "qr-data"
+        return "qr-data" if self.live_qr_data_var.get() else "full-data"
+
     def select_card(self, card_id: str) -> None:
         self.apply_editor_to_card()
         self.store.set_active_card(card_id)
@@ -4041,6 +4172,8 @@ class PerspectiveConsoleApp:
     def load_active_card_into_editor(self) -> None:
         card = self.store.active_card()
         self.card_label_var.set(card.get("label", card.get("id", "Card")))
+        self.display_mode_var.set(normalize_display_mode(card.get("display_mode")))
+        self.qr_empty_behavior_var.set(normalize_qr_empty_behavior(card.get("qr_empty_behavior")))
         fields = card.get("fields", {})
         self.ensure_current_card_values_are_options()
         self.refresh_top_dropdown_values()
@@ -5191,7 +5324,10 @@ class PerspectiveConsoleApp:
         if card.get("type") == "blank":
             self.draw_blank_panel()
             return
-        self.draw_source_analyzer(card)
+        if self.effective_display_mode(card) == "qr-data":
+            self.draw_qr_data(card)
+        else:
+            self.draw_source_analyzer(card)
 
     def draw_blank_panel(self) -> None:
         c = self.output_canvas
@@ -5199,6 +5335,176 @@ class PerspectiveConsoleApp:
         c.configure(bg=blank_bg)
         c.create_rectangle(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT, fill=blank_bg, outline="")
         c.create_text(OUTPUT_WIDTH // 2, OUTPUT_HEIGHT // 2, text="", fill=blank_bg, font=("TkDefaultFont", 1))
+
+    def qr_data_row(self, canvas: tk.Canvas, row_id: str, value: str, y: int, right_x: int, accent: str) -> None:
+        """Render an existing Top Rows option in a bounded QR-mode lane."""
+        row = next((r for r in ensure_top_row_storage(self.store.data) if r.get("id") == row_id), None)
+        option = self.top_row_option_by_text(row, value)
+        if option and option.get("visible", True) is False:
+            return
+        label = str((option or {}).get("text", value)).strip()
+        if not label:
+            return
+        color = normalize_hex_color((option or {}).get("color", self.theme_color("top_row_text")), self.theme_color("top_row_text"))
+        bar_color = normalize_hex_color((option or {}).get("bar_color", accent), accent)
+        family = str((option or {}).get("font_family", "TkDefaultFont")) or "TkDefaultFont"
+        size = max(8, min(21, int((option or {}).get("font_size", 15))))
+        weight = str((option or {}).get("font_weight", "bold")) or "bold"
+        font_spec = (family, size, weight)
+        # Limit the painted lane width without deleting or altering the saved text.
+        font = tkfont.Font(root=self.root, font=font_spec)
+        lane_left = self.qr_data_layout()["three_rows"][0]
+        max_px = max(18, right_x - (lane_left + 24) - 7)
+        if font.measure(label) > max_px:
+            while label and font.measure(label + "…") > max_px:
+                label = label[:-1]
+            label += "…"
+        canvas.create_rectangle(lane_left + 9, y - 13, lane_left + 13, y + 14, fill=bar_color, outline="")
+        canvas.create_text(lane_left + 24, y, anchor="w", text=label, fill=color, font=font_spec)
+        canvas.create_line(lane_left + 9, y + 19, right_x - 7, y + 19, fill=self.theme_color("top_row_line"))
+
+    def fit_qr_fallback_text(self, text: str, width: int, height: int):
+        """Return complete wrapped text and a font that fits inside the QR bay.
+
+        Font sizes use pixels so screen DPI/font settings do not make the text
+        accidentally larger than the 360px output square. A word with no
+        spaces is split as necessary; no ellipses, truncation, or deletion.
+        """
+        text = str(text).replace("\r\n", "\n").replace("\r", "\n")
+        for pixel_size in range(24, 3, -1):
+            fit_font = tkfont.Font(root=self.root, font=("TkDefaultFont", -pixel_size))
+            lines = self.wrap_qr_fallback_text(text, fit_font, width)
+            if (len(lines) * fit_font.metrics("linespace") <= height
+                    and all(fit_font.measure(line) <= width for line in lines)):
+                return lines, fit_font
+        # A nonstandard, extremely long text may still require a smaller font.
+        # Canvas remains unclipped; output is not silently shortened.
+        fit_font = tkfont.Font(root=self.root, font=("TkDefaultFont", -3))
+        return self.wrap_qr_fallback_text(text, fit_font, width), fit_font
+
+    @staticmethod
+    def wrap_qr_fallback_text(text: str, font: tkfont.Font, max_width: int) -> list[str]:
+        """Pixel-accurate word-wrap with hard breaks for pathological long words."""
+        result = []
+        widths = {}
+        # Character widths are cached: measuring every growing line repeatedly
+        # is quadratic and can stall the live Tk window on 860-character cards.
+        def char_width(ch):
+            if ch not in widths:
+                widths[ch] = font.measure(ch)
+            return widths[ch]
+
+        for paragraph in text.split("\n"):
+            line, line_width = "", 0
+            for ch in paragraph:
+                cw = char_width(ch)
+                if not line or line_width + cw <= max_width - 3:
+                    line += ch
+                    line_width += cw
+                    continue
+                split_pos = line.rfind(" ")
+                if split_pos > 0:
+                    result.append(line[:split_pos].rstrip())
+                    line = line[split_pos + 1:] + ch
+                    line_width = sum(char_width(letter) for letter in line)
+                else:
+                    result.append(line.rstrip())
+                    line = ch
+                    line_width = cw
+            result.append(line.rstrip())
+        return result
+
+    def draw_qr_data(self, card: dict) -> None:
+        """Large broadcast QR view, retaining all card data and user-authored layers."""
+        qr_layout = self.qr_data_layout()
+        c = self.output_canvas
+        bg = self.theme_color("output_background")
+        accent = normalize_hex_color(self.scanner_color_var.get().strip() or self.theme_color("accent"), self.theme_color("accent"))
+        panel = self.theme_color("main_panel_background")
+        info = self.theme_color("info_panel_background")
+        border = self.theme_color("standard_line")
+        c.configure(bg=bg)
+        c.create_rectangle(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT, fill=bg, outline="")
+        c.create_rectangle(*qr_layout["frame"], fill=panel,
+                           outline=self.theme_color("main_border"), width=2)
+        c.create_line(qr_layout["frame"][0]+10, 54, qr_layout["frame"][2]-10, 54, fill=self.theme_color("main_border"))
+        for x1, y1, sx, sy in [(qr_layout["frame"][0]+6, qr_layout["frame"][1]+6, 1, 1), (qr_layout["frame"][2]-6, qr_layout["frame"][1]+6, -1, 1),
+                              (qr_layout["frame"][0]+6, qr_layout["frame"][3]-6, 1, -1), (qr_layout["frame"][2]-6, qr_layout["frame"][3]-6, -1, -1)]:
+            c.create_line(x1, y1, x1 + 28 * sx, y1, fill=accent, width=2)
+            c.create_line(x1, y1, x1, y1 + 28 * sy, fill=accent, width=2)
+        self.draw_display_text(c, "title_main")
+        self.draw_display_text(c, "status_live")
+
+        # RESERVED SPACES. No logos, sponsorship text or QR are invented for the user.
+        for key in ("three_rows", "logo", "sponsor", "info"):
+            a,b,d,e = qr_layout[key]
+            c.create_rectangle(a,b,d,e, fill=info, outline=border)
+        fields = card.get("fields", {})
+        for key, y in (("sourceType", qr_layout["three_rows"][1]+23), ("confidence", qr_layout["three_rows"][1]+63), ("verdict", qr_layout["three_rows"][1]+103)):
+            self.qr_data_row(c, key, str(fields.get(key, "")), y, qr_layout["three_rows"][2], accent)
+
+        x,y,size = qr_layout["qr"]
+        link = str(fields.get("sourceLink", "")).strip()
+        qr_settings = self.qr_group()
+        if link:
+            qr_bg = normalize_hex_color(qr_settings.get("background", "#ffffff"), "#ffffff")
+            qr_outline = normalize_hex_color(qr_settings.get("outline", "#d8e2de"), "#d8e2de")
+            c.create_rectangle(x, y, x + size, y + size, fill=qr_bg, outline=qr_outline, width=2)
+            self.draw_qr(c, x, y, size, link)
+            self.draw_display_text(c, "qr_label", override_x=x+size//2, override_y=y-12)
+        else:
+            no_link_mode = normalize_qr_empty_behavior(card.get("qr_empty_behavior"))
+            fallback_text = str(fields.get(no_link_mode, "")).strip() if no_link_mode != "blank" else ""
+            if fallback_text:
+                # Full-width color border, not the tiny clipped 194×113 fallback.
+                # Fit *all* text into the 360×360 QR square, including long words
+                # and 860-character outliers; center both horizontally/vertically.
+                c.create_rectangle(x, y, x + size, y + size,
+                                   fill=self.theme_color("box_background"), outline=accent, width=5)
+                lines, fit_font = self.fit_qr_fallback_text(fallback_text, size - 32, size - 32)
+                c.create_text(x + size // 2, y + size // 2, anchor="center",
+                              text="\n".join(lines), justify="center",
+                              fill=self.theme_color("box_text"), font=fit_font)
+            else:
+                c.create_rectangle(x, y, x + size, y + size, fill=info, outline=border, width=2)
+
+        # Move ALL link/widget data to TOP right. Lower right stays unpainted
+        # so a PNG/emoji layer or sponsor QR overlay can occupy that whole bay.
+        self.draw_display_text(c, "right_brand", override_x=self.qr_data_text_position("right_brand")[0], override_y=self.qr_data_text_position("right_brand")[1])
+        self.draw_display_text(c, "right_subtitle", override_x=self.qr_data_text_position("right_subtitle")[0], override_y=self.qr_data_text_position("right_subtitle")[1])
+        if link:
+            parsed = urlparse(link if "://" in link else "//" + link)
+            host = (parsed.netloc or parsed.path.split("/")[0] or "link").strip().lower()
+            self.draw_display_text(c, "activity_label", override_x=self.qr_data_text_position("activity_label")[0], override_y=self.qr_data_text_position("activity_label")[1])
+            self.draw_display_text(c, "host_label", runtime_vars={"host":host},
+                                   override_x=self.qr_data_text_position("host_label")[0], override_y=self.qr_data_text_position("host_label")[1])
+        else:
+            self.draw_display_text(c, "activity_label", override_text="QR: NO LINK",
+                                   override_x=self.qr_data_text_position("activity_label")[0], override_y=self.qr_data_text_position("activity_label")[1])
+            self.draw_display_text(c, "host_label", override_text="QR LOC: —",
+                                   override_x=self.qr_data_text_position("host_label")[0], override_y=self.qr_data_text_position("host_label")[1])
+
+        # Overlays use exactly the same source pixels and z ordering as full-data.
+        # The original card's PNG/emoji/text coordinates and layers are untouched.
+        render_items=[]
+        for layer in card.get("layers", []):
+            render_items.append((int(layer.get("z", 0)), layer))
+        for _z,layer in sorted(render_items, key=lambda item:item[0]):
+            if not layer or layer.get("visible", True) is False:
+                continue
+            typ = layer.get("type")
+            if typ == "image":
+                self.draw_image_layer(c, layer)
+            elif typ == "text":
+                self.draw_text_layer(c, layer)
+            elif typ == "emoji":
+                if layer.get("id") == "emoji-default-scan" and int(layer.get("x", 900)) >= 890:
+                    continue  # Don't place the default magnifier in the sponsor bay.
+                opacity = max(0.1, min(1.0, float(layer.get("opacity", 1.0))))
+                color = blend_hex_colors(self.theme_color("standard_text"), bg, opacity)
+                c.create_text(int(layer.get("x", 900)), int(layer.get("y", 210)),
+                              text=layer.get("text", ""), fill=color,
+                              font=("TkDefaultFont", int(layer.get("size", 26))))
 
     def draw_source_analyzer(self, card: dict) -> None:
         c = self.output_canvas
@@ -6223,6 +6529,9 @@ class PerspectiveConsoleApp:
 
     def run(self) -> None:
         self.root.mainloop()
+
+from dcw_dualside import install as _install_dualside
+_install_dualside(PerspectiveConsoleApp)
 
 def main() -> int:
     try:
