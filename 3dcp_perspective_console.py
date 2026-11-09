@@ -31,7 +31,7 @@ except Exception:
 
 APP_NAME = "Deck Card Widget"
 THEME_NAME = "Deck Card Widget Lab"
-APP_VERSION = "1.3.6-dualside-alpha.1"
+APP_VERSION = "1.3.6-dualside-alpha.2"
 BUTTSTORE_FORMAT = "3DCP-BUTTSTORE"
 BUTTSTORE_ABI = "3dcp.perspective_console.buttstore.v0"
 
@@ -1756,7 +1756,6 @@ class PerspectiveConsoleApp:
         display_edit_frame = ttk.Frame(layer_notebook, padding=8)
         top_rows_frame = ttk.Frame(layer_notebook, padding=8)
         qr_group_outer = ttk.Frame(layer_notebook)
-        qr_group_frame = ttk.Frame(qr_group_outer, padding=8)
         colors_frame = ttk.Frame(layer_notebook, padding=8)
         layer_notebook.add(deck_frame, text="Deck Cards")
         layer_notebook.add(sticker_frame, text="Emoji Stickers")
@@ -1767,7 +1766,7 @@ class PerspectiveConsoleApp:
         layer_notebook.add(display_edit_frame, text="Display Edit")
         layer_notebook.add(top_rows_frame, text="Top Rows")
         layer_notebook.add(qr_group_outer, text="QR Group")
-        self.setup_qr_tab_scroll(qr_group_outer, qr_group_frame)
+        qr_group_frame = self.setup_qr_tab_scroll(qr_group_outer)
         layer_notebook.add(colors_frame, text="Colors")
         self.build_colors_tab(colors_frame)
 
