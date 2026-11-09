@@ -215,13 +215,15 @@ def install(cls):
         self.redraw_output()
         self.schedule_autosave()
 
-    def setup_qr_tab_scroll(self,outer,inner):
+    def setup_qr_tab_scroll(self,outer):
         """Vertical-only scroll for QR Group and its global QR-Data geometry.
 
         Routed mouse wheel only when the pointer is over this tab; no timers,
         global scroll capture, or horizontal movement.
         """
         canvas=tk.Canvas(outer,highlightthickness=0,bd=0,yscrollincrement=18)
+        # Scrolling content must be parented to the Canvas widget itself.
+        inner=ttk.Frame(canvas,padding=8)
         scroll=ttk.Scrollbar(outer,orient='vertical',command=canvas.yview)
         canvas.configure(yscrollcommand=scroll.set)
         canvas.pack(side='left',fill='both',expand=True)
@@ -239,6 +241,7 @@ def install(cls):
             except (AttributeError,tk.TclError):pass
         for tag in ('<MouseWheel>','<Button-4>','<Button-5>'):
             self.root.bind_all(tag,wheel,add='+')
+        return inner
 
     def gui_setup(self,sticker_frame,image_frame,text_frame,qr_frame):
         self._dualside_scope_vars={}
